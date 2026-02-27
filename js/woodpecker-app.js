@@ -619,6 +619,9 @@ class WoodpeckerApp {
         statusEl.textContent = 'Đang tải puzzles...';
         statusEl.className = 'wp-training-status thinking';
 
+        // Track which attempts have been sent to backend
+        this._sentAttemptIndices = new Set();
+
         try {
             // Create session
             const sessionData = await this._api('/api/woodpecker/sessions', {
@@ -767,6 +770,8 @@ class WoodpeckerApp {
                     timeMs: data.timeMs
                 }
             });
+            // Mark as sent
+            this._sentAttemptIndices.add(data.puzzleIndex);
         } catch (err) {
             console.warn('Failed to record attempt:', err);
         }
@@ -783,7 +788,25 @@ class WoodpeckerApp {
     }
 
     async _onSessionComplete(data) {
-        // Save session to server
+        // Send any unsent attempts (e.g., in-progress puzzle when ending early)
+        const unsentAttempts = data.attempts.filter(a => !this._sentAttemptIndices.has(a.puzzleIndex));
+        for (const attempt of unsentAttempts) {
+            try {
+                await this._api(`/api/woodpecker/sessions/${this.currentSessionId}/attempt`, {
+                    method: 'POST',
+                    body: {
+                        setId: this.currentSetId,
+                        puzzleIndex: attempt.puzzleIndex,
+                        correct: attempt.correct,
+                        timeMs: attempt.timeMs
+                    }
+                });
+            } catch (err) {
+                console.warn('Failed to record attempt:', err);
+            }
+        }
+
+        // Then end the session on server
         try {
             await this._api(`/api/woodpecker/sessions/${this.currentSessionId}`, {
                 method: 'PUT',
