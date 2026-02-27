@@ -30,6 +30,15 @@ class ChessBoard {
         this.lastMove = null;
         this.dragging = null;
 
+        // Preload piece images for faster rendering
+        this._pieceCache = {};
+        const pieces = ['wK', 'wQ', 'wR', 'wB', 'wN', 'wP', 'bK', 'bQ', 'bR', 'bB', 'bN', 'bP'];
+        for (const p of pieces) {
+            const img = new Image();
+            img.src = `img/pieces/${p}.svg`;
+            this._pieceCache[p] = img;
+        }
+
         // Create SVG
         this._createBoard();
     }

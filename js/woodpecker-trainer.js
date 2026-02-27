@@ -169,6 +169,33 @@ class WoodpeckerTrainer {
             this.timerInterval = null;
         }
 
+        // If there's a puzzle in progress, record it as an attempt
+        if (this.currentPuzzleIndex >= 0 && this.puzzleStartTime > 0) {
+            const timeMs = Date.now() - this.puzzleStartTime;
+            const alreadyRecorded = this.sessionAttempts.some(
+                a => a.puzzleIndex === this.currentPuzzleIndex
+            );
+            if (!alreadyRecorded) {
+                const attempt = {
+                    puzzleIndex: this.currentPuzzleIndex,
+                    correct: this.mistakes === 0,
+                    timeMs,
+                    mistakes: this.mistakes
+                };
+                this.sessionAttempts.push(attempt);
+
+                // Also send to backend
+                if (this.onPuzzleComplete) {
+                    this.onPuzzleComplete({
+                        ...attempt,
+                        totalAttempts: this.sessionAttempts.length,
+                        totalSolved: this.sessionAttempts.filter(a => a.correct).length,
+                        isPartial: true
+                    });
+                }
+            }
+        }
+
         this.isActive = false;
         const duration = Math.floor((Date.now() - this.sessionStartTime) / 1000);
 
