@@ -512,7 +512,7 @@ app.get('/api/woodpecker/sets/:id/pgn', authMiddleware, async (req, res) => {
     }
 });
 
-// Start a new cycle
+// Request a new cycle (requires admin approval for cycle 2+)
 app.post('/api/woodpecker/sets/:id/start-cycle', authMiddleware, async (req, res) => {
     try {
         const { rows: setRows } = await pool.query(
@@ -533,20 +533,132 @@ app.post('/api/woodpecker/sets/:id/start-cycle', authMiddleware, async (req, res
             return res.status(400).json({ error: 'Cycle hiện tại chưa hoàn thành' });
         }
 
-        const id = generateId();
-        const { rows } = await pool.query(
-            `INSERT INTO cycles (id, set_id, cycle_number, target_days)
-             VALUES ($1, $2, $3, $4) RETURNING *`,
-            [id, req.params.id, nextCycleNum, CYCLE_DAYS[nextCycleNum - 1]]
+        // Cycle 1 is auto-approved
+        if (nextCycleNum === 1) {
+            const id = generateId();
+            const { rows } = await pool.query(
+                `INSERT INTO cycles (id, set_id, cycle_number, target_days)
+                 VALUES ($1, $2, $3, $4) RETURNING *`,
+                [id, req.params.id, nextCycleNum, CYCLE_DAYS[nextCycleNum - 1]]
+            );
+            const cycle = rows[0];
+            return res.json({
+                cycleNumber: cycle.cycle_number, targetDays: cycle.target_days,
+                startedAt: cycle.started_at, completedAt: cycle.completed_at, sessions: []
+            });
+        }
+
+        // Cycle 2+ requires admin approval — check if already pending
+        const { rows: existingReq } = await pool.query(
+            `SELECT id, status FROM cycle_requests
+             WHERE user_id = $1 AND set_id = $2 AND cycle_number = $3 AND status = 'pending'`,
+            [req.user.id, req.params.id, nextCycleNum]
+        );
+        if (existingReq.length > 0) {
+            return res.status(400).json({ error: 'Yêu cầu đã được gửi, đang chờ admin duyệt', pending: true });
+        }
+
+        // Check if already approved
+        const { rows: approvedReq } = await pool.query(
+            `SELECT id FROM cycle_requests
+             WHERE user_id = $1 AND set_id = $2 AND cycle_number = $3 AND status = 'approved'`,
+            [req.user.id, req.params.id, nextCycleNum]
+        );
+        if (approvedReq.length > 0) {
+            // Already approved — create the cycle
+            const id = generateId();
+            const { rows } = await pool.query(
+                `INSERT INTO cycles (id, set_id, cycle_number, target_days)
+                 VALUES ($1, $2, $3, $4) RETURNING *`,
+                [id, req.params.id, nextCycleNum, CYCLE_DAYS[nextCycleNum - 1]]
+            );
+            const cycle = rows[0];
+            return res.json({
+                cycleNumber: cycle.cycle_number, targetDays: cycle.target_days,
+                startedAt: cycle.started_at, completedAt: cycle.completed_at, sessions: []
+            });
+        }
+
+        // Create pending request
+        const reqId = generateId();
+        await pool.query(
+            `INSERT INTO cycle_requests (id, user_id, set_id, cycle_number)
+             VALUES ($1, $2, $3, $4)`,
+            [reqId, req.user.id, req.params.id, nextCycleNum]
         );
 
-        const cycle = rows[0];
         res.json({
-            cycleNumber: cycle.cycle_number, targetDays: cycle.target_days,
-            startedAt: cycle.started_at, completedAt: cycle.completed_at, sessions: []
+            pending: true,
+            message: `Yêu cầu bắt đầu Cycle ${nextCycleNum} đã được gửi. Vui lòng chờ admin duyệt.`
         });
     } catch (err) {
         console.error('Start cycle error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+// Admin: List pending cycle requests
+app.get('/api/admin/cycle-requests', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT cr.*, u.username, u.full_name, ps.name AS set_name
+            FROM cycle_requests cr
+            JOIN users u ON cr.user_id = u.id
+            JOIN puzzle_sets ps ON cr.set_id = ps.id
+            WHERE cr.status = 'pending'
+            ORDER BY cr.created_at ASC
+        `);
+        res.json(rows.map(r => ({
+            id: r.id, userId: r.user_id, username: r.username,
+            fullName: r.full_name || r.username, setId: r.set_id,
+            setName: r.set_name, cycleNumber: r.cycle_number,
+            createdAt: r.created_at
+        })));
+    } catch (err) {
+        console.error('Get cycle requests error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+// Admin: Approve a cycle request
+app.post('/api/admin/cycle-requests/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM cycle_requests WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy yêu cầu' });
+        if (rows[0].status !== 'pending') return res.status(400).json({ error: 'Yêu cầu đã được xử lý' });
+
+        await pool.query('UPDATE cycle_requests SET status = $1 WHERE id = $2', ['approved', req.params.id]);
+        res.json({ success: true, message: 'Đã duyệt yêu cầu' });
+    } catch (err) {
+        console.error('Approve cycle request error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+// Admin: Reject a cycle request
+app.post('/api/admin/cycle-requests/:id/reject', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM cycle_requests WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy yêu cầu' });
+        if (rows[0].status !== 'pending') return res.status(400).json({ error: 'Yêu cầu đã được xử lý' });
+
+        await pool.query('DELETE FROM cycle_requests WHERE id = $1', [req.params.id]);
+        res.json({ success: true, message: 'Đã từ chối yêu cầu' });
+    } catch (err) {
+        console.error('Reject cycle request error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+// Admin: Approve ALL pending cycle requests
+app.post('/api/admin/cycle-requests/approve-all', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rowCount } = await pool.query(
+            `UPDATE cycle_requests SET status = 'approved' WHERE status = 'pending'`
+        );
+        res.json({ success: true, approved: rowCount, message: `Đã duyệt ${rowCount} yêu cầu` });
+    } catch (err) {
+        console.error('Approve all error:', err);
         res.status(500).json({ error: 'Lỗi server' });
     }
 });

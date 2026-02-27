@@ -602,11 +602,19 @@ class WoodpeckerApp {
         if (!this.currentSetId) return;
 
         try {
-            await this._api(`/api/woodpecker/sets/${this.currentSetId}/start-cycle`, { method: 'POST' });
-            this.showToast('Đã bắt đầu cycle mới!', 'success');
+            const result = await this._api(`/api/woodpecker/sets/${this.currentSetId}/start-cycle`, { method: 'POST' });
+            if (result.pending) {
+                this.showToast(result.message || 'Yêu cầu đã được gửi, chờ admin duyệt', 'info');
+            } else {
+                this.showToast('Đã bắt đầu cycle mới!', 'success');
+            }
             this.showSetDetail(this.currentSetId);
         } catch (err) {
-            this.showToast(err.message, 'error');
+            if (err.message && err.message.includes('chờ admin')) {
+                this.showToast('Yêu cầu đã được gửi, đang chờ admin duyệt', 'info');
+            } else {
+                this.showToast(err.message, 'error');
+            }
         }
     }
 
@@ -1023,11 +1031,15 @@ class WoodpeckerApp {
         const pendingContainer = document.getElementById('wp-admin-pending-list');
         const pendingSection = document.getElementById('wp-admin-pending-section');
         const pendingCount = document.getElementById('wp-pending-count');
+        const cycleReqSection = document.getElementById('wp-admin-cycle-requests-section');
+        const cycleReqList = document.getElementById('wp-admin-cycle-requests-list');
+        const cycleReqCount = document.getElementById('wp-cycle-requests-count');
 
         try {
-            const [users, sets] = await Promise.all([
+            const [users, sets, cycleRequests] = await Promise.all([
                 this._api('/api/admin/users'),
-                this._api('/api/admin/puzzle-sets')
+                this._api('/api/admin/puzzle-sets'),
+                this._api('/api/admin/cycle-requests')
             ]);
 
             // Separate pending and active users
@@ -1053,6 +1065,27 @@ class WoodpeckerApp {
                 `).join('');
             } else {
                 pendingSection.style.display = 'none';
+            }
+
+            // Render cycle requests section
+            if (cycleRequests.length > 0) {
+                cycleReqSection.style.display = '';
+                cycleReqCount.textContent = cycleRequests.length;
+                cycleReqList.innerHTML = cycleRequests.map(r => `
+                    <div class="wp-admin-item wp-pending-item">
+                        <div class="wp-admin-item-icon">🔄</div>
+                        <div class="wp-admin-item-info">
+                            <div class="wp-admin-item-name">${r.fullName} <span class="wp-status-badge pending">Cycle ${r.cycleNumber}</span></div>
+                            <div class="wp-admin-item-meta">Bộ: ${r.setName} · Yêu cầu: ${new Date(r.createdAt).toLocaleDateString('vi')}</div>
+                        </div>
+                        <div class="wp-admin-item-actions">
+                            <button class="wp-btn wp-btn-success wp-btn-sm" onclick="wpApp.approveCycleRequest('${r.id}')" title="Duyệt">✓ Duyệt</button>
+                            <button class="wp-btn wp-btn-danger wp-btn-sm" onclick="wpApp.rejectCycleRequest('${r.id}')" title="Từ chối">✕ Từ chối</button>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                cycleReqSection.style.display = 'none';
             }
 
             // Render active users
@@ -1159,6 +1192,48 @@ class WoodpeckerApp {
             const data = await this._api(`/api/admin/users/${userId}/reject`, { method: 'POST' });
             this.closeModal();
             this.showToast(data.message || 'Đã từ chối đăng ký!', 'success');
+            this._loadAdminData();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    }
+
+    // ===== CYCLE REQUEST MANAGEMENT =====
+    async approveCycleRequest(requestId) {
+        try {
+            const data = await this._api(`/api/admin/cycle-requests/${requestId}/approve`, { method: 'POST' });
+            this.showToast(data.message || 'Đã duyệt yêu cầu cycle!', 'success');
+            this._loadAdminData();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    }
+
+    async rejectCycleRequest(requestId) {
+        this._openModal('Từ chối yêu cầu Cycle', `
+            <p style="margin-bottom:16px;">Bạn có chắc muốn từ chối yêu cầu này?</p>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button class="wp-btn wp-btn-secondary" onclick="wpApp.closeModal()">Hủy</button>
+                <button class="wp-btn wp-btn-danger" onclick="wpApp._confirmRejectCycleRequest('${requestId}')">Từ chối</button>
+            </div>
+        `);
+    }
+
+    async _confirmRejectCycleRequest(requestId) {
+        try {
+            const data = await this._api(`/api/admin/cycle-requests/${requestId}/reject`, { method: 'POST' });
+            this.closeModal();
+            this.showToast(data.message || 'Đã từ chối yêu cầu!', 'success');
+            this._loadAdminData();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    }
+
+    async approveAllCycleRequests() {
+        try {
+            const data = await this._api('/api/admin/cycle-requests/approve-all', { method: 'POST' });
+            this.showToast(data.message || `Đã duyệt tất cả yêu cầu!`, 'success');
             this._loadAdminData();
         } catch (err) {
             this.showToast(err.message, 'error');

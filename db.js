@@ -101,6 +101,16 @@ async function initDB() {
 
             -- Add pgn_content column if not exists (migration)
             ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pgn_content TEXT DEFAULT '';
+
+            -- Cycle approval requests
+            CREATE TABLE IF NOT EXISTS cycle_requests (
+                id TEXT PRIMARY KEY,
+                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                set_id TEXT REFERENCES puzzle_sets(id) ON DELETE CASCADE,
+                cycle_number INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
         `);
 
         // Create default admin if no users exist

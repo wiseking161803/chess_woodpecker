@@ -222,6 +222,21 @@
                 </div>
             </div>
 
+            <!-- Cycle Requests -->
+            <div class="wp-admin-section" id="wp-admin-cycle-requests-section" style="display:none;">
+                <div class="wp-admin-section-header">
+                    <h2>🔄 Yêu cầu Cycle mới</h2>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span class="wp-pending-badge" id="wp-cycle-requests-count">0</span>
+                        <button class="wp-btn wp-btn-success wp-btn-sm" onclick="wpApp.approveAllCycleRequests()">✓
+                            Duyệt tất cả</button>
+                    </div>
+                </div>
+                <div class="wp-admin-list" id="wp-admin-cycle-requests-list">
+                    <div class="wp-loading"><span class="wp-spinner"></span> Đang tải...</div>
+                </div>
+            </div>
+
             <!-- Users -->
             <div class="wp-admin-section">
                 <div class="wp-admin-section-header">
