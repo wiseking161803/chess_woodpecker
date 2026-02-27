@@ -244,6 +244,102 @@ app.post('/api/admin/users/:id/reject', authMiddleware, adminMiddleware, async (
     }
 });
 
+// Admin: Get user detailed stats
+app.get('/api/admin/users/:id/stats', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        // User info
+        const { rows: userRows } = await pool.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+        if (userRows.length === 0) return res.status(404).json({ error: 'User not found' });
+        const u = userRows[0];
+
+        // Streak
+        const { rows: dcRows } = await pool.query(
+            `SELECT completed_date FROM daily_completions WHERE user_id = $1 ORDER BY completed_date DESC`,
+            [req.params.id]
+        );
+        const dates = dcRows.map(r => {
+            const d = new Date(r.completed_date);
+            return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        });
+        const today = new Date();
+        const todayMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+        const oneDayMs = 86400000;
+        const completedToday = dates.length > 0 && dates[0] === todayMs;
+
+        let currentStreak = 0;
+        if (dates.length > 0) {
+            let checkDate = completedToday ? todayMs : todayMs - oneDayMs;
+            for (const d of dates) {
+                if (d === checkDate) { currentStreak++; checkDate -= oneDayMs; }
+                else if (d < checkDate) break;
+            }
+            if (!completedToday && dates[0] !== todayMs - oneDayMs) currentStreak = 0;
+        }
+        let longestStreak = dates.length > 0 ? 1 : 0;
+        let tempStreak = 1;
+        for (let i = 1; i < dates.length; i++) {
+            if (dates[i - 1] - dates[i] === oneDayMs) {
+                tempStreak++;
+                longestStreak = Math.max(longestStreak, tempStreak);
+            } else { tempStreak = 1; }
+        }
+
+        // Puzzle sets progress
+        const { rows: sets } = await pool.query(
+            'SELECT id, name, puzzle_count FROM puzzle_sets WHERE assigned_to = $1', [req.params.id]
+        );
+        const setsProgress = [];
+        for (const s of sets) {
+            const { rows: cycles } = await pool.query(
+                'SELECT cycle_number, completed_at FROM cycles WHERE set_id = $1 ORDER BY cycle_number', [s.id]
+            );
+            const completedCycles = cycles.filter(c => c.completed_at).length;
+            const currentCycle = cycles.length > 0 ? cycles[cycles.length - 1].cycle_number : 0;
+            setsProgress.push({
+                name: s.name, puzzleCount: s.puzzle_count,
+                completedCycles, currentCycle, totalCycles: cycles.length
+            });
+        }
+
+        // Total sessions & attempts
+        const { rows: sessionStats } = await pool.query(`
+            SELECT COUNT(DISTINCT ts.id) AS total_sessions,
+                   COALESCE(SUM(ts.puzzles_attempted), 0) AS total_attempted,
+                   COALESCE(SUM(ts.puzzles_solved), 0) AS total_solved,
+                   COALESCE(SUM(ts.duration), 0) AS total_time
+            FROM training_sessions ts
+            JOIN cycles c ON ts.cycle_id = c.id
+            JOIN puzzle_sets ps ON c.set_id = ps.id
+            WHERE ps.assigned_to = $1
+        `, [req.params.id]);
+
+        const ss = sessionStats[0];
+        const totalAttempted = parseInt(ss.total_attempted) || 0;
+        const totalSolved = parseInt(ss.total_solved) || 0;
+
+        res.json({
+            user: {
+                id: u.id, username: u.username, fullName: u.full_name,
+                dateOfBirth: u.date_of_birth, createdAt: u.created_at
+            },
+            streak: {
+                current: currentStreak, longest: longestStreak,
+                totalDays: dates.length, completedToday
+            },
+            puzzleSets: setsProgress,
+            stats: {
+                totalSessions: parseInt(ss.total_sessions) || 0,
+                totalAttempted, totalSolved,
+                accuracy: totalAttempted > 0 ? (totalSolved / totalAttempted * 100).toFixed(1) : '0.0',
+                totalTimeMinutes: Math.round((parseInt(ss.total_time) || 0) / 60)
+            }
+        });
+    } catch (err) {
+        console.error('Admin user stats error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
 // ===== ADMIN PUZZLE SET MANAGEMENT =====
 
 app.get('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, async (req, res) => {

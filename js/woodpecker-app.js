@@ -1089,8 +1089,8 @@ class WoodpeckerApp {
             usersContainer.innerHTML = activeUsers.map(u => `
                 <div class="wp-admin-item">
                     <div class="wp-admin-item-icon">${u.role === 'admin' ? '👑' : '👤'}</div>
-                    <div class="wp-admin-item-info">
-                        <div class="wp-admin-item-name">${u.username}${u.fullName ? ` <span style="opacity:0.6;font-size:0.85em;">(${u.fullName})</span>` : ''}</div>
+                    <div class="wp-admin-item-info" style="cursor:pointer;" onclick="wpApp.viewUserStats('${u.id}')">
+                        <div class="wp-admin-item-name">${u.username}${u.fullName ? ` <span style="opacity:0.6;font-size:0.85em;">(${u.fullName})</span>` : ''} <span style="font-size:0.7em;opacity:0.4;">📊</span></div>
                         <div class="wp-admin-item-meta">${u.role} · ${new Date(u.createdAt).toLocaleDateString('vi')}</div>
                     </div>
                     <div class="wp-admin-item-actions">
@@ -1192,6 +1192,75 @@ class WoodpeckerApp {
             this._loadAdminData();
         } catch (err) {
             this.showToast(err.message, 'error');
+        }
+    }
+
+    // ===== VIEW USER STATS (Admin) =====
+    async viewUserStats(userId) {
+        try {
+            const data = await this._api(`/api/admin/users/${userId}/stats`);
+            const { user, streak, puzzleSets, stats } = data;
+
+            const setsHtml = puzzleSets.length > 0 ? puzzleSets.map(s => `
+                <div style="padding:8px 0;border-bottom:1px solid var(--border);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>🧩 ${s.name}</strong>
+                        <span style="font-size:0.85em;color:var(--text-secondary);">${s.completedCycles}/7 cycles</span>
+                    </div>
+                    <div style="margin-top:6px;height:6px;border-radius:3px;background:var(--border);overflow:hidden;">
+                        <div style="height:100%;width:${(s.completedCycles / 7 * 100).toFixed(0)}%;background:var(--primary);border-radius:3px;transition:width 0.3s;"></div>
+                    </div>
+                    <div style="font-size:0.75em;color:var(--text-secondary);margin-top:4px;">${s.puzzleCount} puzzles · Cycle hiện tại: ${s.currentCycle || 'Chưa bắt đầu'}</div>
+                </div>
+            `).join('') : '<div style="color:var(--text-secondary);font-size:0.9em;">Chưa có bộ puzzle nào</div>';
+
+            this._openModal(`📊 ${user.fullName || user.username}`, `
+                <div style="max-width:400px;">
+                    <div style="text-align:center;margin-bottom:16px;">
+                        <div style="font-size:0.85em;color:var(--text-secondary);">@${user.username} · Tham gia: ${new Date(user.createdAt).toLocaleDateString('vi')}</div>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
+                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(245,158,11,0.1);">
+                            <div style="font-size:1.5rem;">🔥</div>
+                            <div style="font-size:1.2rem;font-weight:700;">${streak.current}</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);">Streak</div>
+                        </div>
+                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(34,197,94,0.1);">
+                            <div style="font-size:1.5rem;">🏆</div>
+                            <div style="font-size:1.2rem;font-weight:700;">${streak.longest}</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);">Dài nhất</div>
+                        </div>
+                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(59,130,246,0.1);">
+                            <div style="font-size:1.5rem;">📅</div>
+                            <div style="font-size:1.2rem;font-weight:700;">${streak.totalDays}</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);">Tổng ngày</div>
+                        </div>
+                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(168,85,247,0.1);">
+                            <div style="font-size:1.5rem;">${streak.completedToday ? '✅' : '⬜'}</div>
+                            <div style="font-size:1.2rem;font-weight:700;">${streak.completedToday ? 'Done' : '-'}</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);">Hôm nay</div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:16px;">
+                        <h3 style="font-size:0.95rem;margin-bottom:8px;">🎯 Thống kê tổng</h3>
+                        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-size:0.85em;">
+                            <div>📝 Sessions: <strong>${stats.totalSessions}</strong></div>
+                            <div>⏱ Thời gian: <strong>${stats.totalTimeMinutes} phút</strong></div>
+                            <div>✅ Đúng: <strong>${stats.totalSolved}/${stats.totalAttempted}</strong></div>
+                            <div>🎯 Accuracy: <strong>${stats.accuracy}%</strong></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 style="font-size:0.95rem;margin-bottom:8px;">📚 Bộ puzzle</h3>
+                        ${setsHtml}
+                    </div>
+                </div>
+            `);
+        } catch (err) {
+            this.showToast('Lỗi: ' + err.message, 'error');
         }
     }
 
