@@ -110,6 +110,7 @@ class WoodpeckerTrainer {
         this.isInVariation = false;
         this._playerVariationRestore = null;
         this._isAutoPlaying = false;
+        this._consecutiveMistakes = 0;
 
         // Sync player color to the board so it knows which pieces can be dragged
         this.board.playerColor = this.playerColor;
@@ -492,6 +493,7 @@ class WoodpeckerTrainer {
             }
 
             this.moveIndex++;
+            this._consecutiveMistakes = 0;
 
             // Small delay then process next
             setTimeout(() => this._processNextMove(), 300);
@@ -514,6 +516,7 @@ class WoodpeckerTrainer {
                 this.chess.undo();
                 this.board.setPosition(this.chess);
                 this.mistakes++;
+                this._consecutiveMistakes++;
 
                 if (typeof soundManager !== 'undefined') {
                     soundManager.playIncorrect();
@@ -522,7 +525,12 @@ class WoodpeckerTrainer {
                 this._showFeedback('incorrect');
 
                 if (this.onStatusChange) {
-                    this.onStatusChange({ status: 'incorrect', mistakes: this.mistakes });
+                    this.onStatusChange({
+                        status: 'incorrect',
+                        mistakes: this.mistakes,
+                        consecutiveMistakes: this._consecutiveMistakes,
+                        hintAvailable: this._consecutiveMistakes >= 5
+                    });
                 }
             }
         }
@@ -733,6 +741,23 @@ class WoodpeckerTrainer {
     }
 
     /**
+     * Get hint for the current expected move
+     * Returns { san, from, to } or null if not available
+     */
+    getHint() {
+        if (!this.isActive || this.moveIndex >= this.currentMoves.length) return null;
+        const expectedMove = this.currentMoves[this.moveIndex];
+        // Use chess.js to figure out from/to squares
+        const possibleMoves = this.chess.moves({ verbose: true });
+        const normalizedExpected = this._normalizeSan(expectedMove.san);
+        const match = possibleMoves.find(m => this._normalizeSan(m.san) === normalizedExpected);
+        if (match) {
+            return { san: expectedMove.san, from: match.from, to: match.to };
+        }
+        return { san: expectedMove.san, from: null, to: null };
+    }
+
+    /**
      * Reset trainer state
      */
     reset() {
@@ -748,6 +773,7 @@ class WoodpeckerTrainer {
         this.isInVariation = false;
         this._playerVariationRestore = null;
         this._isAutoPlaying = false;
+        this._consecutiveMistakes = 0;
 
         if (this.timerInterval) {
             clearInterval(this.timerInterval);

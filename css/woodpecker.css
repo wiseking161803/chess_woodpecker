@@ -965,6 +965,36 @@ textarea.wp-input {
     font-weight: 600;
 }
 
+.wp-btn-hint {
+    background: linear-gradient(135deg, #f0a030, #e8891c);
+    color: #fff;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    animation: hint-pulse 1.5s ease-in-out infinite;
+    transition: transform 0.15s ease;
+}
+
+.wp-btn-hint:hover {
+    transform: scale(1.05);
+}
+
+@keyframes hint-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(240, 160, 48, 0.4);
+    }
+
+    50% {
+        box-shadow: 0 0 12px 4px rgba(240, 160, 48, 0.25);
+    }
+}
+
 /* Move List */
 .wp-move-list {
     background: var(--bg-surface);

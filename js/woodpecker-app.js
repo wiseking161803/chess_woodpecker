@@ -924,6 +924,12 @@ class WoodpeckerApp {
 
         const t = (k, ...a) => typeof i18n !== 'undefined' ? i18n.t(k, ...a) : k;
 
+        // Show/hide hint button
+        const hintBtn = document.getElementById('wp-hint-btn');
+        if (hintBtn) {
+            hintBtn.style.display = (data.status === 'incorrect' && data.hintAvailable) ? 'block' : 'none';
+        }
+
         switch (data.status) {
             case 'your_turn':
                 if (data.isVariation) {
@@ -967,6 +973,30 @@ class WoodpeckerApp {
 
     _onMoveCompleted(data) {
         // Visual feedback handled by trainer
+        // Hide hint button on any successful move
+        const hintBtn = document.getElementById('wp-hint-btn');
+        if (hintBtn) hintBtn.style.display = 'none';
+    }
+
+    /**
+     * Use hint - highlight the source square of the expected move
+     */
+    useHint() {
+        if (!this.trainer) return;
+        const hint = this.trainer.getHint();
+        if (!hint || !hint.from) return;
+
+        // Highlight the source square of the correct move so user knows which piece to move
+        this.board.drawHighlights([{ color: '#2ecc71', square: hint.from }]);
+
+        // Optionally hide the hint button after use
+        const hintBtn = document.getElementById('wp-hint-btn');
+        if (hintBtn) hintBtn.style.display = 'none';
+
+        // Clear the highlight after 3 seconds
+        setTimeout(() => {
+            this.board.clearAnnotations();
+        }, 3000);
     }
 
     _updateSessionQuickStats() {
