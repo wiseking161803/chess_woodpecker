@@ -1425,45 +1425,74 @@ class WoodpeckerApp {
             );
 
             const cards = allStats.map(data => {
-                const name = data.user.fullName || data.user.username;
-                return `
-                    <div class="user-card">
-                        <h2 style="margin:0 0 12px;font-size:1.2rem;border-bottom:2px solid #4f46e5;padding-bottom:8px;">
-                            📊 ${name}
-                        </h2>
-                        ${this._buildUserStatsHtml(data, true)}
+                const { user, streak, puzzleSets, stats } = data;
+                const name = user.fullName || user.username;
+                const setsLines = puzzleSets.map(s => {
+                    const pct = s.puzzleCount > 0 ? (s.puzzlesSolved / s.puzzleCount * 100).toFixed(0) : 0;
+                    return `<div class="set-row">
+                        <span class="set-name">${s.name}</span>
+                        <span class="set-progress">${s.puzzlesSolved}/${s.puzzleCount}</span>
+                        <div class="mini-bar"><div class="mini-fill" style="width:${pct}%"></div></div>
+                    </div>`;
+                }).join('');
+
+                return `<div class="card">
+                    <div class="card-header">${name} <span class="uname">@${user.username}</span></div>
+                    <div class="badges">
+                        <span class="badge b-fire">🔥 ${streak.current}</span>
+                        <span class="badge b-best">🏆 ${streak.longest}</span>
+                        <span class="badge b-days">📅 ${streak.totalDays}</span>
+                        <span class="badge b-today">${streak.completedToday ? '✅' : '⬜'}</span>
                     </div>
-                `;
+                    <div class="stats-row">
+                        <span>📝 <b>${stats.totalSessions}</b> sess</span>
+                        <span>⏱ <b>${stats.totalTimeMinutes}</b>m</span>
+                        <span>✅ <b>${stats.totalSolved}/${stats.totalAttempted}</b></span>
+                        <span>🎯 <b>${stats.accuracy}%</b></span>
+                        <span>⚡ <b>${stats.ppm}</b></span>
+                    </div>
+                    <div class="sets-section">${setsLines || '<span class="no-sets">Chưa có bài</span>'}</div>
+                </div>`;
             }).join('');
 
             const today = new Date().toLocaleDateString('vi');
             const printHtml = `<!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <title>Thống kê học viên - ${today}</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a2e; padding: 20px; background: #fff; }
-        .header { text-align: center; margin-bottom: 24px; border-bottom: 2px solid #4f46e5; padding-bottom: 12px; }
-        .header h1 { font-size: 1.4rem; color: #4f46e5; }
-        .header p { font-size: 0.85rem; color: #666; margin-top: 4px; }
-        .user-card { page-break-inside: avoid; margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
-        .wp-user-stats-content { max-width: 100% !important; }
-        :root { --border: #e2e8f0; --text-secondary: #666; --primary: #4f46e5; }
-        @media print {
-            body { padding: 0; }
-            .user-card { break-inside: avoid; border: 1px solid #ccc; }
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Thống kê - ${today}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;padding:12px;background:#fff;font-size:11px}
+.header{text-align:center;margin-bottom:10px;border-bottom:2px solid #4f46e5;padding-bottom:6px}
+.header h1{font-size:14px;color:#4f46e5}
+.header p{font-size:10px;color:#666;margin-top:2px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;break-inside:avoid}
+.card-header{font-size:12px;font-weight:700;border-bottom:1.5px solid #4f46e5;padding-bottom:4px;margin-bottom:5px}
+.uname{font-weight:400;color:#888;font-size:10px}
+.badges{display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap}
+.badge{font-size:10px;padding:1px 5px;border-radius:4px;background:#f3f4f6}
+.b-fire{background:#fef3c7}.b-best{background:#d1fae5}.b-days{background:#dbeafe}.b-today{background:#ede9fe}
+.stats-row{display:flex;gap:8px;flex-wrap:wrap;font-size:10px;margin-bottom:5px;padding:3px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
+.stats-row b{color:#4f46e5}
+.sets-section{font-size:10px}
+.set-row{display:flex;align-items:center;gap:6px;padding:2px 0}
+.set-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-progress{font-weight:600;white-space:nowrap;font-size:9px;color:#4f46e5}
+.mini-bar{width:40px;height:4px;background:#e5e7eb;border-radius:2px;overflow:hidden}
+.mini-fill{height:100%;background:#4f46e5;border-radius:2px}
+.no-sets{color:#aaa;font-style:italic}
+@media print{body{padding:0}.grid{gap:8px}.card{border:1px solid #bbb}}
+</style>
 </head>
 <body>
-    <div class="header">
-        <h1>♞ TriTueTre Chess - Thống kê học viên</h1>
-        <p>Ngày xuất: ${today} · ${allStats.length} học viên</p>
-    </div>
-    ${cards}
-    <script>window.onload = () => window.print();</script>
+<div class="header">
+    <h1>♞ TriTueTre Chess - Thống kê học viên</h1>
+    <p>Ngày: ${today} · ${allStats.length} học viên</p>
+</div>
+<div class="grid">${cards}</div>
+<script>window.onload=()=>window.print()</script>
 </body>
 </html>`;
 
