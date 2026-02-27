@@ -1099,19 +1099,38 @@ class WoodpeckerApp {
                 </div>
             `).join('');
 
-            setsContainer.innerHTML = sets.length > 0 ? sets.map(s => `
+            // Group sets by pgnFile for compact display
+            const grouped = {};
+            for (const s of sets) {
+                const key = s.pgnFile || s.originalName || s.name;
+                if (!grouped[key]) {
+                    grouped[key] = { name: s.name, pgnFile: s.pgnFile, puzzleCount: s.puzzleCount, users: [] };
+                }
+                grouped[key].users.push({ id: s.id, username: s.assignedUsername, assignedTo: s.assignedTo, cycles: s.cycles });
+            }
+            const groupedArr = Object.values(grouped);
+
+            setsContainer.innerHTML = groupedArr.length > 0 ? groupedArr.map(g => {
+                const firstSetId = g.users[0].id;
+                const userBadges = g.users.map(u =>
+                    `<span class="wp-user-badge">
+                        ${u.username} <span class="wp-badge-cycle">(C${u.cycles.length})</span>
+                        <span class="wp-user-badge-del" onclick="event.stopPropagation();wpApp.deletePuzzleSet('${u.id}')" title="Xóa">✕</span>
+                    </span>`
+                ).join('');
+                return `
                 <div class="wp-admin-item">
                     <div class="wp-admin-item-icon">🧩</div>
-                    <div class="wp-admin-item-info">
-                        <div class="wp-admin-item-name">${s.name}</div>
-                        <div class="wp-admin-item-meta">${s.puzzleCount} puzzles · Gán cho: ${s.assignedUsername} · ${s.cycles.length} cycles</div>
+                    <div class="wp-admin-item-info" style="flex:1;min-width:0;">
+                        <div class="wp-admin-item-name">${g.name}</div>
+                        <div class="wp-admin-item-meta">${g.puzzleCount} puzzles · ${g.users.length} users</div>
+                        <div class="wp-admin-set-users">${userBadges}</div>
                     </div>
                     <div class="wp-admin-item-actions">
-                        <button class="wp-btn wp-btn-secondary wp-btn-sm" onclick="wpApp.showAssignSetForm('${s.id}', '${s.name.replace(/'/g, "\\\'")}', '${s.pgnFile}')" title="Gán thêm User">👥+</button>
-                        <button class="wp-btn wp-btn-danger wp-btn-sm" onclick="wpApp.deletePuzzleSet('${s.id}')">🗑</button>
+                        <button class="wp-btn wp-btn-secondary wp-btn-sm" onclick="wpApp.showAssignSetForm('${firstSetId}', '${g.name.replace(/'/g, "\\\\'")}', '${g.pgnFile}')" title="Gán thêm User">👥+</button>
                     </div>
-                </div>
-            `).join('') : '<div class="wp-empty"><div class="empty-sub">Chưa có puzzle set nào</div></div>';
+                </div>`;
+            }).join('') : '<div class="wp-empty"><div class="empty-sub">Chưa có puzzle set nào</div></div>';
         } catch (err) {
             usersContainer.innerHTML = `<div class="wp-empty"><div class="empty-text">Lỗi: ${err.message}</div></div>`;
         }

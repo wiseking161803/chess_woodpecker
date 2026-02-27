@@ -1170,6 +1170,48 @@ textarea.wp-input {
     gap: 8px;
 }
 
+/* Compact user badges inside puzzle set rows */
+.wp-admin-set-users {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.wp-admin-set-users .wp-user-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--accent-light);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.wp-admin-set-users .wp-badge-cycle {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.wp-admin-set-users .wp-user-badge-del {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    margin-left: 2px;
+    opacity: 0.5;
+    transition: var(--transition);
+}
+
+.wp-admin-set-users .wp-user-badge-del:hover {
+    color: var(--danger);
+    opacity: 1;
+}
+
 /* ===== MODAL ===== */
 .wp-modal-overlay {
     position: fixed;
