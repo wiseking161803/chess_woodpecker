@@ -36,12 +36,16 @@ async function initDB() {
             CREATE TABLE IF NOT EXISTS puzzle_sets (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                pgn_file TEXT NOT NULL,
+                pgn_file TEXT DEFAULT '',
+                pgn_content TEXT DEFAULT '',
                 original_name TEXT DEFAULT '',
                 puzzle_count INTEGER DEFAULT 0,
                 assigned_to TEXT REFERENCES users(id) ON DELETE CASCADE,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
+
+            -- Add pgn_content column if not exists (migration)
+            ALTER TABLE puzzle_sets ADD COLUMN IF NOT EXISTS pgn_content TEXT DEFAULT '';
 
             -- Cycles
             CREATE TABLE IF NOT EXISTS cycles (
@@ -88,11 +92,15 @@ async function initDB() {
                 id TEXT PRIMARY KEY,
                 course_id TEXT REFERENCES courses(id) ON DELETE CASCADE,
                 name TEXT NOT NULL,
-                pgn_file TEXT NOT NULL,
+                pgn_file TEXT DEFAULT '',
+                pgn_content TEXT DEFAULT '',
                 original_name TEXT DEFAULT '',
                 line_count INTEGER DEFAULT 0,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
+
+            -- Add pgn_content column if not exists (migration)
+            ALTER TABLE chapters ADD COLUMN IF NOT EXISTS pgn_content TEXT DEFAULT '';
         `);
 
         // Create default admin if no users exist

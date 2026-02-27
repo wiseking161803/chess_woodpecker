@@ -1,6 +1,5 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -8,14 +7,6 @@ const { pool, initDB, generateId } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Data paths (PGN files still on filesystem)
-const DATA_DIR = path.join(__dirname, 'data');
-const PGN_DIR = path.join(DATA_DIR, 'pgn');
-
-// Ensure directories exist
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(PGN_DIR)) fs.mkdirSync(PGN_DIR, { recursive: true });
 
 // Middleware
 app.use(express.json());
@@ -32,23 +23,17 @@ app.get('/', (req, res) => {
 
 app.use(express.static(path.join(__dirname)));
 
-// Multer for PGN file uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, PGN_DIR),
-    filename: (req, file, cb) => {
-        const uniqueName = Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-        cb(null, uniqueName);
-    }
-});
+// Multer for PGN file uploads (memory storage — content saved to DB)
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     fileFilter: (req, file, cb) => {
         if (file.originalname.toLowerCase().endsWith('.pgn')) {
             cb(null, true);
         } else {
             cb(new Error('Chỉ chấp nhận file PGN'));
         }
-    }
+    },
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
 });
 
 // ===== HELPERS =====
@@ -295,13 +280,8 @@ app.post('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, upload.singl
     if (!req.body.assignedTo) return res.status(400).json({ error: 'Cần chọn user' });
 
     try {
-        let puzzleCount = 0;
-        try {
-            const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
-            puzzleCount = (content.match(/\[Event\s/g) || []).length;
-        } catch (e) {
-            console.warn('Could not count puzzles:', e.message);
-        }
+        const pgnContent = req.file.buffer.toString('utf-8');
+        const puzzleCount = (pgnContent.match(/\[Event\s/g) || []).length;
 
         let userIds;
         try {
@@ -315,14 +295,14 @@ app.post('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, upload.singl
         for (const userId of userIds) {
             const id = generateId();
             await pool.query(
-                `INSERT INTO puzzle_sets (id, name, pgn_file, original_name, puzzle_count, assigned_to)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                `INSERT INTO puzzle_sets (id, name, pgn_file, pgn_content, original_name, puzzle_count, assigned_to)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                 [id, req.body.name || req.file.originalname.replace('.pgn', ''),
-                    req.file.filename, req.file.originalname, puzzleCount, userId]
+                    req.file.originalname, pgnContent, req.file.originalname, puzzleCount, userId]
             );
             createdSets.push({
                 id, name: req.body.name || req.file.originalname.replace('.pgn', ''),
-                pgnFile: req.file.filename, originalName: req.file.originalname,
+                pgnFile: req.file.originalname, originalName: req.file.originalname,
                 puzzleCount, assignedTo: userId, createdAt: new Date().toISOString(), cycles: []
             });
         }
@@ -349,16 +329,16 @@ app.post('/api/admin/puzzle-sets/:id/assign', authMiddleware, adminMiddleware, a
         const createdSets = [];
         for (const userId of userIds) {
             const { rows: existing } = await pool.query(
-                'SELECT id FROM puzzle_sets WHERE pgn_file = $1 AND assigned_to = $2',
-                [sourceSet.pgn_file, userId]
+                'SELECT id FROM puzzle_sets WHERE original_name = $1 AND assigned_to = $2',
+                [sourceSet.original_name, userId]
             );
             if (existing.length > 0) continue;
 
             const id = generateId();
             await pool.query(
-                `INSERT INTO puzzle_sets (id, name, pgn_file, original_name, puzzle_count, assigned_to)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
-                [id, sourceSet.name, sourceSet.pgn_file, sourceSet.original_name, sourceSet.puzzle_count, userId]
+                `INSERT INTO puzzle_sets (id, name, pgn_file, pgn_content, original_name, puzzle_count, assigned_to)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [id, sourceSet.name, sourceSet.pgn_file, sourceSet.pgn_content, sourceSet.original_name, sourceSet.puzzle_count, userId]
             );
             createdSets.push({ id, name: sourceSet.name });
         }
@@ -372,21 +352,10 @@ app.post('/api/admin/puzzle-sets/:id/assign', authMiddleware, adminMiddleware, a
 
 app.delete('/api/admin/puzzle-sets/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT pgn_file FROM puzzle_sets WHERE id = $1', [req.params.id]);
+        const { rows } = await pool.query('SELECT id FROM puzzle_sets WHERE id = $1', [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-        const pgnFile = rows[0].pgn_file;
         await pool.query('DELETE FROM puzzle_sets WHERE id = $1', [req.params.id]);
-
-        // Only delete PGN file if no other sets reference it
-        const { rows: otherRefs } = await pool.query(
-            'SELECT id FROM puzzle_sets WHERE pgn_file = $1', [pgnFile]
-        );
-        if (otherRefs.length === 0) {
-            const pgnPath = path.join(PGN_DIR, pgnFile);
-            if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
-        }
-
         res.json({ success: true });
     } catch (err) {
         console.error('Delete puzzle set error:', err);
@@ -530,15 +499,13 @@ app.get('/api/woodpecker/sets/:id/leaderboard', authMiddleware, async (req, res)
 app.get('/api/woodpecker/sets/:id/pgn', authMiddleware, async (req, res) => {
     try {
         const { rows } = await pool.query(
-            'SELECT pgn_file FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            'SELECT pgn_content FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
             [req.params.id, req.user.id]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+        if (!rows[0].pgn_content) return res.status(404).json({ error: 'Nội dung PGN không tồn tại' });
 
-        const pgnPath = path.join(PGN_DIR, rows[0].pgn_file);
-        if (!fs.existsSync(pgnPath)) return res.status(404).json({ error: 'File PGN không tồn tại' });
-
-        res.type('text/plain').send(fs.readFileSync(pgnPath, 'utf-8'));
+        res.type('text/plain').send(rows[0].pgn_content);
     } catch (err) {
         console.error('Get PGN error:', err);
         res.status(500).json({ error: 'Lỗi server' });
@@ -874,15 +841,6 @@ app.put('/api/courses/:id', async (req, res) => {
 
 app.delete('/api/courses/:id', async (req, res) => {
     try {
-        // Delete chapter PGN files
-        const { rows: chapters } = await pool.query(
-            'SELECT pgn_file FROM chapters WHERE course_id = $1', [req.params.id]
-        );
-        for (const ch of chapters) {
-            const pgnPath = path.join(PGN_DIR, ch.pgn_file);
-            if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
-        }
-
         const { rowCount } = await pool.query('DELETE FROM courses WHERE id = $1', [req.params.id]);
         if (rowCount === 0) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
         res.json({ success: true });
@@ -914,23 +872,18 @@ app.post('/api/courses/:courseId/chapters', upload.single('pgn'), async (req, re
         if (courseCheck.length === 0) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
         if (!req.file) return res.status(400).json({ error: 'Cần upload file PGN' });
 
-        let lineCount = 0;
-        try {
-            const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
-            lineCount = (content.match(/\[Event\s/g) || []).length;
-        } catch (e) {
-            console.warn('Could not count lines:', e.message);
-        }
+        const pgnContent = req.file.buffer.toString('utf-8');
+        const lineCount = (pgnContent.match(/\[Event\s/g) || []).length;
 
         const id = generateId();
         const name = req.body.name || req.file.originalname.replace('.pgn', '');
         await pool.query(
-            `INSERT INTO chapters (id, course_id, name, pgn_file, original_name, line_count)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [id, req.params.courseId, name, req.file.filename, req.file.originalname, lineCount]
+            `INSERT INTO chapters (id, course_id, name, pgn_file, pgn_content, original_name, line_count)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [id, req.params.courseId, name, req.file.originalname, pgnContent, req.file.originalname, lineCount]
         );
 
-        res.json({ id, name, pgnFile: req.file.filename, originalName: req.file.originalname, lineCount, createdAt: new Date().toISOString() });
+        res.json({ id, name, pgnFile: req.file.originalname, originalName: req.file.originalname, lineCount, createdAt: new Date().toISOString() });
     } catch (err) {
         console.error('Create chapter error:', err);
         res.status(500).json({ error: 'Lỗi server' });
@@ -942,7 +895,6 @@ app.put('/api/chapters/:id', upload.single('pgn'), async (req, res) => {
         const { rows } = await pool.query('SELECT * FROM chapters WHERE id = $1', [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
 
-        const chapter = rows[0];
         const updates = [];
         const params = [];
         let idx = 1;
@@ -950,19 +902,12 @@ app.put('/api/chapters/:id', upload.single('pgn'), async (req, res) => {
         if (req.body.name !== undefined) { updates.push(`name = $${idx++}`); params.push(req.body.name); }
 
         if (req.file) {
-            // Delete old PGN
-            const oldPath = path.join(PGN_DIR, chapter.pgn_file);
-            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            const pgnContent = req.file.buffer.toString('utf-8');
+            const lineCount = (pgnContent.match(/\[Event\s/g) || []).length;
 
-            updates.push(`pgn_file = $${idx++}`); params.push(req.file.filename);
+            updates.push(`pgn_file = $${idx++}`); params.push(req.file.originalname);
+            updates.push(`pgn_content = $${idx++}`); params.push(pgnContent);
             updates.push(`original_name = $${idx++}`); params.push(req.file.originalname);
-
-            let lineCount = 0;
-            try {
-                const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
-                lineCount = (content.match(/\[Event\s/g) || []).length;
-            } catch (e) { console.warn('Could not count lines:', e.message); }
-
             updates.push(`line_count = $${idx++}`); params.push(lineCount);
         }
 
@@ -982,13 +927,8 @@ app.put('/api/chapters/:id', upload.single('pgn'), async (req, res) => {
 
 app.delete('/api/chapters/:id', async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT pgn_file FROM chapters WHERE id = $1', [req.params.id]);
-        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
-
-        const pgnPath = path.join(PGN_DIR, rows[0].pgn_file);
-        if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
-
-        await pool.query('DELETE FROM chapters WHERE id = $1', [req.params.id]);
+        const { rowCount } = await pool.query('DELETE FROM chapters WHERE id = $1', [req.params.id]);
+        if (rowCount === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
         res.json({ success: true });
     } catch (err) {
         console.error('Delete chapter error:', err);
@@ -998,13 +938,11 @@ app.delete('/api/chapters/:id', async (req, res) => {
 
 app.get('/api/chapters/:id/pgn', async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT pgn_file FROM chapters WHERE id = $1', [req.params.id]);
+        const { rows } = await pool.query('SELECT pgn_content FROM chapters WHERE id = $1', [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
+        if (!rows[0].pgn_content) return res.status(404).json({ error: 'Nội dung PGN không tồn tại' });
 
-        const pgnPath = path.join(PGN_DIR, rows[0].pgn_file);
-        if (!fs.existsSync(pgnPath)) return res.status(404).json({ error: 'File PGN không tồn tại' });
-
-        res.type('text/plain').send(fs.readFileSync(pgnPath, 'utf-8'));
+        res.type('text/plain').send(rows[0].pgn_content);
     } catch (err) {
         console.error('Get chapter PGN error:', err);
         res.status(500).json({ error: 'Lỗi server' });
