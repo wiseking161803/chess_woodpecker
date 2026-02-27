@@ -171,15 +171,16 @@ class WoodpeckerTrainer {
         }
 
         // If there's a puzzle in progress, record it as an attempt
-        if (this.currentPuzzleIndex >= 0 && this.puzzleStartTime > 0) {
+        if (this.currentPuzzleIndex >= 0 && this.puzzleStartTime > 0 && this.moveIndex > 0) {
             const timeMs = Date.now() - this.puzzleStartTime;
             const alreadyRecorded = this.sessionAttempts.some(
                 a => a.puzzleIndex === this.currentPuzzleIndex
             );
             if (!alreadyRecorded) {
+                // In-progress puzzle is always incorrect (not fully solved)
                 const attempt = {
                     puzzleIndex: this.currentPuzzleIndex,
-                    correct: this.mistakes === 0,
+                    correct: false,
                     timeMs,
                     mistakes: this.mistakes
                 };
