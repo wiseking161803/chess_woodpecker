@@ -4,31 +4,18 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const { pool, initDB, generateId } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Data paths
+// Data paths (PGN files still on filesystem)
 const DATA_DIR = path.join(__dirname, 'data');
 const PGN_DIR = path.join(DATA_DIR, 'pgn');
-const COURSES_FILE = path.join(DATA_DIR, 'courses.json');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
-const WOODPECKER_FILE = path.join(DATA_DIR, 'woodpecker.json');
 
 // Ensure directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PGN_DIR)) fs.mkdirSync(PGN_DIR, { recursive: true });
-
-// Initialize data files if not exists
-if (!fs.existsSync(COURSES_FILE)) {
-    fs.writeFileSync(COURSES_FILE, JSON.stringify({ courses: [] }, null, 2));
-}
-if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [], sessions: {} }, null, 2));
-}
-if (!fs.existsSync(WOODPECKER_FILE)) {
-    fs.writeFileSync(WOODPECKER_FILE, JSON.stringify({ puzzleSets: [] }, null, 2));
-}
 
 // Middleware
 app.use(express.json());
@@ -65,50 +52,40 @@ const upload = multer({
 });
 
 // ===== HELPERS =====
-function readJSON(filepath) {
-    return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-}
-
-function writeJSON(filepath, data) {
-    fs.writeFileSync(filepath, JSON.stringify(data, null, 2), 'utf-8');
-}
-
-function readCourses() { return readJSON(COURSES_FILE); }
-function writeCourses(data) { writeJSON(COURSES_FILE, data); }
-function readUsers() { return readJSON(USERS_FILE); }
-function writeUsers(data) { writeJSON(USERS_FILE, data); }
-function readWoodpecker() { return readJSON(WOODPECKER_FILE); }
-function writeWoodpecker(data) { writeJSON(WOODPECKER_FILE, data); }
-
-function generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
-}
-
 function generateToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
 // ===== AUTH MIDDLEWARE =====
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
     const token = req.headers['authorization']?.replace('Bearer ', '');
     if (!token) return res.status(401).json({ error: 'Cần đăng nhập' });
 
-    const userData = readUsers();
-    const sessionEntry = userData.sessions[token];
-    if (!sessionEntry) return res.status(401).json({ error: 'Phiên đăng nhập không hợp lệ' });
+    try {
+        const { rows: sessions } = await pool.query(
+            'SELECT user_id, created_at FROM sessions WHERE token = $1', [token]
+        );
+        if (sessions.length === 0) return res.status(401).json({ error: 'Phiên đăng nhập không hợp lệ' });
 
-    // Check expiry (7 days)
-    if (Date.now() - new Date(sessionEntry.createdAt).getTime() > 7 * 24 * 60 * 60 * 1000) {
-        delete userData.sessions[token];
-        writeUsers(userData);
-        return res.status(401).json({ error: 'Phiên đăng nhập đã hết hạn' });
+        const session = sessions[0];
+
+        // Check expiry (7 days)
+        if (Date.now() - new Date(session.created_at).getTime() > 7 * 24 * 60 * 60 * 1000) {
+            await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
+            return res.status(401).json({ error: 'Phiên đăng nhập đã hết hạn' });
+        }
+
+        const { rows: users } = await pool.query(
+            'SELECT id, username, role FROM users WHERE id = $1', [session.user_id]
+        );
+        if (users.length === 0) return res.status(401).json({ error: 'Người dùng không tồn tại' });
+
+        req.user = users[0];
+        next();
+    } catch (err) {
+        console.error('Auth error:', err);
+        res.status(500).json({ error: 'Lỗi xác thực' });
     }
-
-    const user = userData.users.find(u => u.id === sessionEntry.userId);
-    if (!user) return res.status(401).json({ error: 'Người dùng không tồn tại' });
-
-    req.user = { id: user.id, username: user.username, role: user.role };
-    next();
 }
 
 function adminMiddleware(req, res, next) {
@@ -120,108 +97,72 @@ function adminMiddleware(req, res, next) {
 
 // ===== AUTH API =====
 
-// Create default admin if no users exist
-(async function initAdmin() {
-    const userData = readUsers();
-    if (userData.users.length === 0) {
-        const hash = await bcrypt.hash('admin123', 10);
-        userData.users.push({
-            id: generateId(),
-            username: 'admin',
-            fullName: 'Administrator',
-            passwordHash: hash,
-            role: 'admin',
-            status: 'active',
-            createdAt: new Date().toISOString()
-        });
-        writeUsers(userData);
-        console.log('  ℹ Default admin created: admin / admin123');
-    } else {
-        // Migrate existing users: add status if missing
-        let changed = false;
-        userData.users.forEach(u => {
-            if (!u.status) { u.status = 'active'; changed = true; }
-        });
-        if (changed) writeUsers(userData);
-    }
-})();
-
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Thiếu thông tin đăng nhập' });
 
-    const userData = readUsers();
-    const user = userData.users.find(u => u.username === username);
-    if (!user) return res.status(401).json({ error: 'Sai tên đăng nhập hoặc mật khẩu' });
+    try {
+        const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        if (rows.length === 0) return res.status(401).json({ error: 'Sai tên đăng nhập hoặc mật khẩu' });
 
-    // Block pending users
-    if (user.status === 'pending') {
-        return res.status(403).json({ error: 'Tài khoản đang chờ admin duyệt. Vui lòng liên hệ admin.' });
+        const user = rows[0];
+
+        if (user.status === 'pending') {
+            return res.status(403).json({ error: 'Tài khoản đang chờ admin duyệt. Vui lòng liên hệ admin.' });
+        }
+
+        const valid = await bcrypt.compare(password, user.password_hash);
+        if (!valid) return res.status(401).json({ error: 'Sai tên đăng nhập hoặc mật khẩu' });
+
+        const token = generateToken();
+        await pool.query('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
+
+        res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+    } catch (err) {
+        console.error('Login error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) return res.status(401).json({ error: 'Sai tên đăng nhập hoặc mật khẩu' });
-
-    const token = generateToken();
-    userData.sessions[token] = { userId: user.id, createdAt: new Date().toISOString() };
-    writeUsers(userData);
-
-    res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
 });
 
 // ===== SELF-REGISTRATION =====
 app.post('/api/auth/register', async (req, res) => {
     const { fullName, username, password, confirmPassword, dateOfBirth } = req.body;
 
-    // Validate required fields
     if (!fullName || !username || !password || !confirmPassword || !dateOfBirth) {
         return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin' });
     }
-
-    // Validate password match
     if (password !== confirmPassword) {
         return res.status(400).json({ error: 'Mật khẩu xác nhận không khớp' });
     }
-
-    // Validate password length
     if (password.length < 4) {
         return res.status(400).json({ error: 'Mật khẩu phải có ít nhất 4 ký tự' });
     }
-
-    // Validate username format
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
         return res.status(400).json({ error: 'Username chỉ chứa chữ, số, dấu gạch dưới (3-20 ký tự)' });
     }
 
-    const userData = readUsers();
+    try {
+        const { rows: existing } = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+        if (existing.length > 0) return res.status(400).json({ error: 'Username đã tồn tại' });
 
-    // Check duplicate username
-    if (userData.users.find(u => u.username === username)) {
-        return res.status(400).json({ error: 'Username đã tồn tại' });
+        const hash = await bcrypt.hash(password, 10);
+        const id = generateId();
+        await pool.query(
+            `INSERT INTO users (id, username, full_name, password_hash, date_of_birth, role, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [id, username, fullName, hash, dateOfBirth, 'user', 'pending']
+        );
+
+        res.json({ success: true, message: 'Đăng ký thành công! Vui lòng chờ admin duyệt tài khoản.' });
+    } catch (err) {
+        console.error('Register error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    const hash = await bcrypt.hash(password, 10);
-    const user = {
-        id: generateId(),
-        username,
-        fullName,
-        passwordHash: hash,
-        dateOfBirth,
-        role: 'user',
-        status: 'pending',
-        createdAt: new Date().toISOString()
-    };
-    userData.users.push(user);
-    writeUsers(userData);
-
-    res.json({ success: true, message: 'Đăng ký thành công! Vui lòng chờ admin duyệt tài khoản.' });
 });
 
-app.post('/api/auth/logout', authMiddleware, (req, res) => {
+app.post('/api/auth/logout', authMiddleware, async (req, res) => {
     const token = req.headers['authorization']?.replace('Bearer ', '');
-    const userData = readUsers();
-    delete userData.sessions[token];
-    writeUsers(userData);
+    await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
     res.json({ success: true });
 });
 
@@ -231,644 +172,861 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 
 // ===== ADMIN USER MANAGEMENT =====
 
-app.get('/api/admin/users', authMiddleware, adminMiddleware, (req, res) => {
-    const userData = readUsers();
-    let users = userData.users;
-
-    // Filter by status if query param provided
-    if (req.query.status) {
-        users = users.filter(u => u.status === req.query.status);
+app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        let query = 'SELECT id, username, full_name, date_of_birth, role, status, created_at FROM users';
+        const params = [];
+        if (req.query.status) {
+            query += ' WHERE status = $1';
+            params.push(req.query.status);
+        }
+        query += ' ORDER BY created_at ASC';
+        const { rows } = await pool.query(query, params);
+        res.json(rows.map(u => ({
+            id: u.id, username: u.username, fullName: u.full_name || '',
+            dateOfBirth: u.date_of_birth || '', role: u.role,
+            status: u.status || 'active', createdAt: u.created_at
+        })));
+    } catch (err) {
+        console.error('Get users error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    res.json(users.map(u => ({
-        id: u.id, username: u.username, fullName: u.fullName || '', dateOfBirth: u.dateOfBirth || '',
-        role: u.role, status: u.status || 'active', createdAt: u.createdAt
-    })));
 });
 
 app.post('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
     const { username, password, role } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Thiếu username hoặc password' });
 
-    const userData = readUsers();
-    if (userData.users.find(u => u.username === username)) {
-        return res.status(400).json({ error: 'Username đã tồn tại' });
+    try {
+        const { rows: existing } = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+        if (existing.length > 0) return res.status(400).json({ error: 'Username đã tồn tại' });
+
+        const hash = await bcrypt.hash(password, 10);
+        const id = generateId();
+        await pool.query(
+            `INSERT INTO users (id, username, full_name, password_hash, role, status)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [id, username, req.body.fullName || '', hash, role || 'user', 'active']
+        );
+        res.json({ id, username, role: role || 'user', status: 'active', createdAt: new Date().toISOString() });
+    } catch (err) {
+        console.error('Create user error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    const hash = await bcrypt.hash(password, 10);
-    const user = {
-        id: generateId(),
-        username,
-        fullName: req.body.fullName || '',
-        passwordHash: hash,
-        role: role || 'user',
-        status: 'active',
-        createdAt: new Date().toISOString()
-    };
-    userData.users.push(user);
-    writeUsers(userData);
-
-    res.json({ id: user.id, username: user.username, role: user.role, status: user.status, createdAt: user.createdAt });
 });
 
-app.delete('/api/admin/users/:id', authMiddleware, adminMiddleware, (req, res) => {
-    const userData = readUsers();
-    const idx = userData.users.findIndex(u => u.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy user' });
-    if (userData.users[idx].role === 'admin') {
-        return res.status(400).json({ error: 'Không thể xóa admin' });
-    }
+app.delete('/api/admin/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT role FROM users WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy user' });
+        if (rows[0].role === 'admin') return res.status(400).json({ error: 'Không thể xóa admin' });
 
-    // Remove sessions for this user
-    for (const [token, session] of Object.entries(userData.sessions)) {
-        if (session.userId === req.params.id) delete userData.sessions[token];
+        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Delete user error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    userData.users.splice(idx, 1);
-    writeUsers(userData);
-    res.json({ success: true });
 });
 
 // Approve pending user
-app.post('/api/admin/users/:id/approve', authMiddleware, adminMiddleware, (req, res) => {
-    const userData = readUsers();
-    const user = userData.users.find(u => u.id === req.params.id);
-    if (!user) return res.status(404).json({ error: 'Không tìm thấy user' });
-    if (user.status !== 'pending') return res.status(400).json({ error: 'User không ở trạng thái chờ duyệt' });
+app.post('/api/admin/users/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT username, status FROM users WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy user' });
+        if (rows[0].status !== 'pending') return res.status(400).json({ error: 'User không ở trạng thái chờ duyệt' });
 
-    user.status = 'active';
-    writeUsers(userData);
-    res.json({ success: true, message: `Đã duyệt user ${user.username}` });
+        await pool.query('UPDATE users SET status = $1 WHERE id = $2', ['active', req.params.id]);
+        res.json({ success: true, message: `Đã duyệt user ${rows[0].username}` });
+    } catch (err) {
+        console.error('Approve error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
 // Reject pending user
-app.post('/api/admin/users/:id/reject', authMiddleware, adminMiddleware, (req, res) => {
-    const userData = readUsers();
-    const idx = userData.users.findIndex(u => u.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy user' });
-    if (userData.users[idx].status !== 'pending') return res.status(400).json({ error: 'User không ở trạng thái chờ duyệt' });
+app.post('/api/admin/users/:id/reject', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT status FROM users WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy user' });
+        if (rows[0].status !== 'pending') return res.status(400).json({ error: 'User không ở trạng thái chờ duyệt' });
 
-    userData.users.splice(idx, 1);
-    writeUsers(userData);
-    res.json({ success: true, message: 'Đã từ chối đăng ký' });
+        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+        res.json({ success: true, message: 'Đã từ chối đăng ký' });
+    } catch (err) {
+        console.error('Reject error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
 // ===== ADMIN PUZZLE SET MANAGEMENT =====
 
-app.get('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const userData = readUsers();
-    const sets = data.puzzleSets.map(s => {
-        const user = userData.users.find(u => u.id === s.assignedTo);
-        return { ...s, assignedUsername: user ? user.username : 'Unknown' };
-    });
-    res.json(sets);
+app.get('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows: sets } = await pool.query(`
+            SELECT ps.*, u.username AS assigned_username
+            FROM puzzle_sets ps
+            LEFT JOIN users u ON ps.assigned_to = u.id
+            ORDER BY ps.created_at DESC
+        `);
+
+        // Load cycles for each set
+        const result = [];
+        for (const s of sets) {
+            const { rows: cycles } = await pool.query(
+                'SELECT * FROM cycles WHERE set_id = $1 ORDER BY cycle_number', [s.id]
+            );
+            result.push({
+                id: s.id, name: s.name, pgnFile: s.pgn_file,
+                originalName: s.original_name, puzzleCount: s.puzzle_count,
+                assignedTo: s.assigned_to, assignedUsername: s.assigned_username || 'Unknown',
+                createdAt: s.created_at, cycles
+            });
+        }
+        res.json(result);
+    } catch (err) {
+        console.error('Get puzzle sets error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
-app.post('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, upload.single('pgn'), (req, res) => {
+app.post('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, upload.single('pgn'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Cần upload file PGN' });
     if (!req.body.assignedTo) return res.status(400).json({ error: 'Cần chọn user' });
 
-    const data = readWoodpecker();
-
-    // Count puzzles in PGN
-    let puzzleCount = 0;
     try {
-        const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
-        puzzleCount = (content.match(/\[Event\s/g) || []).length;
-    } catch (e) {
-        console.warn('Could not count puzzles:', e.message);
-    }
+        let puzzleCount = 0;
+        try {
+            const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
+            puzzleCount = (content.match(/\[Event\s/g) || []).length;
+        } catch (e) {
+            console.warn('Could not count puzzles:', e.message);
+        }
 
-    // Parse assignedTo — can be JSON array or single string
-    let userIds;
-    try {
-        userIds = JSON.parse(req.body.assignedTo);
-        if (!Array.isArray(userIds)) userIds = [userIds];
-    } catch {
-        userIds = [req.body.assignedTo];
-    }
+        let userIds;
+        try {
+            userIds = JSON.parse(req.body.assignedTo);
+            if (!Array.isArray(userIds)) userIds = [userIds];
+        } catch {
+            userIds = [req.body.assignedTo];
+        }
 
-    const createdSets = [];
-    for (const userId of userIds) {
-        const puzzleSet = {
-            id: generateId(),
-            name: req.body.name || req.file.originalname.replace('.pgn', ''),
-            pgnFile: req.file.filename,
-            originalName: req.file.originalname,
-            puzzleCount,
-            assignedTo: userId,
-            createdAt: new Date().toISOString(),
-            cycles: []
-        };
-        data.puzzleSets.push(puzzleSet);
-        createdSets.push(puzzleSet);
-    }
+        const createdSets = [];
+        for (const userId of userIds) {
+            const id = generateId();
+            await pool.query(
+                `INSERT INTO puzzle_sets (id, name, pgn_file, original_name, puzzle_count, assigned_to)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [id, req.body.name || req.file.originalname.replace('.pgn', ''),
+                    req.file.filename, req.file.originalname, puzzleCount, userId]
+            );
+            createdSets.push({
+                id, name: req.body.name || req.file.originalname.replace('.pgn', ''),
+                pgnFile: req.file.filename, originalName: req.file.originalname,
+                puzzleCount, assignedTo: userId, createdAt: new Date().toISOString(), cycles: []
+            });
+        }
 
-    writeWoodpecker(data);
-    res.json(createdSets.length === 1 ? createdSets[0] : createdSets);
+        res.json(createdSets.length === 1 ? createdSets[0] : createdSets);
+    } catch (err) {
+        console.error('Create puzzle set error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
 // Assign existing puzzle set to additional users
-app.post('/api/admin/puzzle-sets/:id/assign', authMiddleware, adminMiddleware, (req, res) => {
+app.post('/api/admin/puzzle-sets/:id/assign', authMiddleware, adminMiddleware, async (req, res) => {
     const { userIds } = req.body;
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
         return res.status(400).json({ error: 'Cần danh sách user IDs' });
     }
 
-    const data = readWoodpecker();
-    const sourceSet = data.puzzleSets.find(s => s.id === req.params.id);
-    if (!sourceSet) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+    try {
+        const { rows } = await pool.query('SELECT * FROM puzzle_sets WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+        const sourceSet = rows[0];
 
-    const createdSets = [];
-    for (const userId of userIds) {
-        // Skip if user already has this PGN assigned
-        const existing = data.puzzleSets.find(s => s.pgnFile === sourceSet.pgnFile && s.assignedTo === userId);
-        if (existing) continue;
+        const createdSets = [];
+        for (const userId of userIds) {
+            const { rows: existing } = await pool.query(
+                'SELECT id FROM puzzle_sets WHERE pgn_file = $1 AND assigned_to = $2',
+                [sourceSet.pgn_file, userId]
+            );
+            if (existing.length > 0) continue;
 
-        const newSet = {
-            id: generateId(),
-            name: sourceSet.name,
-            pgnFile: sourceSet.pgnFile,
-            originalName: sourceSet.originalName,
-            puzzleCount: sourceSet.puzzleCount,
-            assignedTo: userId,
-            createdAt: new Date().toISOString(),
-            cycles: []
-        };
-        data.puzzleSets.push(newSet);
-        createdSets.push(newSet);
+            const id = generateId();
+            await pool.query(
+                `INSERT INTO puzzle_sets (id, name, pgn_file, original_name, puzzle_count, assigned_to)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [id, sourceSet.name, sourceSet.pgn_file, sourceSet.original_name, sourceSet.puzzle_count, userId]
+            );
+            createdSets.push({ id, name: sourceSet.name });
+        }
+
+        res.json({ assigned: createdSets.length, sets: createdSets });
+    } catch (err) {
+        console.error('Assign error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    writeWoodpecker(data);
-    res.json({ assigned: createdSets.length, sets: createdSets });
 });
 
-app.delete('/api/admin/puzzle-sets/:id', authMiddleware, adminMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const idx = data.puzzleSets.findIndex(s => s.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+app.delete('/api/admin/puzzle-sets/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT pgn_file FROM puzzle_sets WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-    const pgnFile = data.puzzleSets[idx].pgnFile;
-    data.puzzleSets.splice(idx, 1);
+        const pgnFile = rows[0].pgn_file;
+        await pool.query('DELETE FROM puzzle_sets WHERE id = $1', [req.params.id]);
 
-    // Only delete PGN file if no other sets reference it
-    const otherRefs = data.puzzleSets.filter(s => s.pgnFile === pgnFile);
-    if (otherRefs.length === 0) {
-        const pgnPath = path.join(PGN_DIR, pgnFile);
-        if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
+        // Only delete PGN file if no other sets reference it
+        const { rows: otherRefs } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE pgn_file = $1', [pgnFile]
+        );
+        if (otherRefs.length === 0) {
+            const pgnPath = path.join(PGN_DIR, pgnFile);
+            if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Delete puzzle set error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    writeWoodpecker(data);
-    res.json({ success: true });
 });
 
 // ===== WOODPECKER USER API =====
 
 const CYCLE_DAYS = [28, 14, 7, 4, 3, 2, 1];
 
-app.get('/api/woodpecker/sets', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const userSets = data.puzzleSets.filter(s => s.assignedTo === req.user.id);
-    res.json(userSets);
-});
+// Helper: build full set object with cycles/sessions/attempts
+async function buildSetWithCycles(setId) {
+    const { rows: setRows } = await pool.query('SELECT * FROM puzzle_sets WHERE id = $1', [setId]);
+    if (setRows.length === 0) return null;
+    const set = setRows[0];
 
-app.get('/api/woodpecker/sets/:id', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === req.params.id && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
-    res.json(set);
-});
+    const { rows: cycleRows } = await pool.query(
+        'SELECT * FROM cycles WHERE set_id = $1 ORDER BY cycle_number', [setId]
+    );
 
-// Leaderboard for a puzzle set (all users with same set name)
-app.get('/api/woodpecker/sets/:id/leaderboard', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const userData = readUsers();
+    const cycles = [];
+    for (const c of cycleRows) {
+        const { rows: sessionRows } = await pool.query(
+            'SELECT * FROM training_sessions WHERE cycle_id = $1 ORDER BY started_at', [c.id]
+        );
 
-    // Find the requesting user's set
-    const mySet = data.puzzleSets.find(s => s.id === req.params.id && s.assignedTo === req.user.id);
-    if (!mySet) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
-
-    // Find all sets with the same name (same puzzle set assigned to different users)
-    const relatedSets = data.puzzleSets.filter(s => s.name === mySet.name);
-
-    const leaderboard = relatedSets.map(set => {
-        const user = userData.users.find(u => u.id === set.assignedTo);
-        const username = user ? user.username : 'Unknown';
-
-        let totalAttempted = 0;
-        let totalSolved = 0;
-        let totalTimeMs = 0;
-        let totalDuration = 0;
-        let bestCycle = 0;
-
-        set.cycles.forEach(cycle => {
-            if (cycle.cycleNumber > bestCycle) bestCycle = cycle.cycleNumber;
-            cycle.sessions.forEach(session => {
-                totalAttempted += session.puzzlesAttempted || 0;
-                totalSolved += session.puzzlesSolved || 0;
-                totalDuration += session.duration || 0;
-                if (session.attempts) {
-                    session.attempts.forEach(a => {
-                        totalTimeMs += a.timeMs || 0;
-                    });
-                }
+        const sessions = [];
+        for (const s of sessionRows) {
+            const { rows: attemptRows } = await pool.query(
+                'SELECT puzzle_index, correct, time_ms, recorded_at FROM attempts WHERE session_id = $1 ORDER BY recorded_at',
+                [s.id]
+            );
+            sessions.push({
+                id: s.id, startedAt: s.started_at, endedAt: s.ended_at,
+                duration: s.duration, puzzlesAttempted: s.puzzles_attempted,
+                puzzlesSolved: s.puzzles_solved,
+                attempts: attemptRows.map(a => ({
+                    puzzleIndex: a.puzzle_index, correct: a.correct,
+                    timeMs: a.time_ms, recordedAt: a.recorded_at
+                }))
             });
+        }
+
+        cycles.push({
+            cycleNumber: c.cycle_number, targetDays: c.target_days,
+            startedAt: c.started_at, completedAt: c.completed_at, sessions
         });
+    }
 
-        const accuracy = totalAttempted > 0 ? (totalSolved / totalAttempted * 100) : 0;
-        const totalMinutes = totalDuration / 60;
-        const ppm = totalMinutes > 0 ? (totalSolved / totalMinutes) : 0;
+    return {
+        id: set.id, name: set.name, pgnFile: set.pgn_file,
+        originalName: set.original_name, puzzleCount: set.puzzle_count,
+        assignedTo: set.assigned_to, createdAt: set.created_at, cycles
+    };
+}
 
-        return {
-            userId: set.assignedTo,
-            username,
-            totalAttempted,
-            totalSolved,
-            accuracy: Math.round(accuracy * 10) / 10,
-            ppm: Math.round(ppm * 100) / 100,
-            bestCycle,
-            isMe: set.assignedTo === req.user.id
-        };
-    }).filter(entry => entry.totalAttempted > 0); // Only show users who have attempted
-
-    res.json(leaderboard);
+app.get('/api/woodpecker/sets', authMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE assigned_to = $1', [req.user.id]
+        );
+        const sets = [];
+        for (const r of rows) {
+            const set = await buildSetWithCycles(r.id);
+            if (set) sets.push(set);
+        }
+        res.json(sets);
+    } catch (err) {
+        console.error('Get sets error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
-app.get('/api/woodpecker/sets/:id/pgn', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === req.params.id && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+app.get('/api/woodpecker/sets/:id', authMiddleware, async (req, res) => {
+    try {
+        const set = await buildSetWithCycles(req.params.id);
+        if (!set || set.assignedTo !== req.user.id) {
+            return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+        }
+        res.json(set);
+    } catch (err) {
+        console.error('Get set error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
 
-    const pgnPath = path.join(PGN_DIR, set.pgnFile);
-    if (!fs.existsSync(pgnPath)) return res.status(404).json({ error: 'File PGN không tồn tại' });
+// Leaderboard
+app.get('/api/woodpecker/sets/:id/leaderboard', authMiddleware, async (req, res) => {
+    try {
+        const set = await buildSetWithCycles(req.params.id);
+        if (!set || set.assignedTo !== req.user.id) {
+            return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+        }
 
-    res.type('text/plain').send(fs.readFileSync(pgnPath, 'utf-8'));
+        // Find all sets with the same name
+        const { rows: relatedRows } = await pool.query(
+            'SELECT id, assigned_to FROM puzzle_sets WHERE name = $1', [set.name]
+        );
+
+        const leaderboard = [];
+        for (const rel of relatedRows) {
+            const relSet = await buildSetWithCycles(rel.id);
+            if (!relSet) continue;
+
+            const { rows: userRows } = await pool.query('SELECT username FROM users WHERE id = $1', [rel.assigned_to]);
+            const username = userRows.length > 0 ? userRows[0].username : 'Unknown';
+
+            let totalAttempted = 0, totalSolved = 0, totalTimeMs = 0, totalDuration = 0, bestCycle = 0;
+            relSet.cycles.forEach(cycle => {
+                if (cycle.cycleNumber > bestCycle) bestCycle = cycle.cycleNumber;
+                cycle.sessions.forEach(session => {
+                    totalAttempted += session.puzzlesAttempted || 0;
+                    totalSolved += session.puzzlesSolved || 0;
+                    totalDuration += session.duration || 0;
+                    session.attempts.forEach(a => { totalTimeMs += a.timeMs || 0; });
+                });
+            });
+
+            if (totalAttempted === 0) continue;
+
+            const accuracy = totalAttempted > 0 ? (totalSolved / totalAttempted * 100) : 0;
+            const totalMinutes = totalDuration / 60;
+            const ppm = totalMinutes > 0 ? (totalSolved / totalMinutes) : 0;
+
+            leaderboard.push({
+                userId: rel.assigned_to, username, totalAttempted, totalSolved,
+                accuracy: Math.round(accuracy * 10) / 10,
+                ppm: Math.round(ppm * 100) / 100,
+                bestCycle, isMe: rel.assigned_to === req.user.id
+            });
+        }
+
+        res.json(leaderboard);
+    } catch (err) {
+        console.error('Leaderboard error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+app.get('/api/woodpecker/sets/:id/pgn', authMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT pgn_file FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            [req.params.id, req.user.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+
+        const pgnPath = path.join(PGN_DIR, rows[0].pgn_file);
+        if (!fs.existsSync(pgnPath)) return res.status(404).json({ error: 'File PGN không tồn tại' });
+
+        res.type('text/plain').send(fs.readFileSync(pgnPath, 'utf-8'));
+    } catch (err) {
+        console.error('Get PGN error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
 // Start a new cycle
-app.post('/api/woodpecker/sets/:id/start-cycle', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === req.params.id && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+app.post('/api/woodpecker/sets/:id/start-cycle', authMiddleware, async (req, res) => {
+    try {
+        const { rows: setRows } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            [req.params.id, req.user.id]
+        );
+        if (setRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-    const nextCycleNum = set.cycles.length + 1;
-    if (nextCycleNum > 7) return res.status(400).json({ error: 'Đã hoàn thành tất cả 7 cycles' });
+        const { rows: cycleRows } = await pool.query(
+            'SELECT * FROM cycles WHERE set_id = $1 ORDER BY cycle_number DESC LIMIT 1',
+            [req.params.id]
+        );
 
-    // Check if current cycle is completed
-    const currentCycle = set.cycles[set.cycles.length - 1];
-    if (currentCycle && !currentCycle.completedAt) {
-        return res.status(400).json({ error: 'Cycle hiện tại chưa hoàn thành' });
+        const nextCycleNum = cycleRows.length > 0 ? cycleRows[0].cycle_number + 1 : 1;
+        if (nextCycleNum > 7) return res.status(400).json({ error: 'Đã hoàn thành tất cả 7 cycles' });
+
+        if (cycleRows.length > 0 && !cycleRows[0].completed_at) {
+            return res.status(400).json({ error: 'Cycle hiện tại chưa hoàn thành' });
+        }
+
+        const id = generateId();
+        const { rows } = await pool.query(
+            `INSERT INTO cycles (id, set_id, cycle_number, target_days)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [id, req.params.id, nextCycleNum, CYCLE_DAYS[nextCycleNum - 1]]
+        );
+
+        const cycle = rows[0];
+        res.json({
+            cycleNumber: cycle.cycle_number, targetDays: cycle.target_days,
+            startedAt: cycle.started_at, completedAt: cycle.completed_at, sessions: []
+        });
+    } catch (err) {
+        console.error('Start cycle error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    const newCycle = {
-        cycleNumber: nextCycleNum,
-        targetDays: CYCLE_DAYS[nextCycleNum - 1],
-        startedAt: new Date().toISOString(),
-        completedAt: null,
-        sessions: []
-    };
-
-    set.cycles.push(newCycle);
-    writeWoodpecker(data);
-    res.json(newCycle);
 });
 
 // Complete current cycle
-app.post('/api/woodpecker/sets/:id/complete-cycle', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === req.params.id && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+app.post('/api/woodpecker/sets/:id/complete-cycle', authMiddleware, async (req, res) => {
+    try {
+        const { rows: setRows } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            [req.params.id, req.user.id]
+        );
+        if (setRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-    const currentCycle = set.cycles[set.cycles.length - 1];
-    if (!currentCycle || currentCycle.completedAt) {
-        return res.status(400).json({ error: 'Không có cycle đang hoạt động' });
+        const { rows: cycleRows } = await pool.query(
+            'SELECT * FROM cycles WHERE set_id = $1 AND completed_at IS NULL ORDER BY cycle_number DESC LIMIT 1',
+            [req.params.id]
+        );
+        if (cycleRows.length === 0) return res.status(400).json({ error: 'Không có cycle đang hoạt động' });
+
+        await pool.query('UPDATE cycles SET completed_at = NOW() WHERE id = $1', [cycleRows[0].id]);
+
+        res.json({
+            cycleNumber: cycleRows[0].cycle_number, targetDays: cycleRows[0].target_days,
+            startedAt: cycleRows[0].started_at, completedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error('Complete cycle error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    currentCycle.completedAt = new Date().toISOString();
-    writeWoodpecker(data);
-    res.json(currentCycle);
 });
 
 // Create a new session
-app.post('/api/woodpecker/sessions', authMiddleware, (req, res) => {
+app.post('/api/woodpecker/sessions', authMiddleware, async (req, res) => {
     const { setId } = req.body;
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === setId && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+    try {
+        const { rows: setRows } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            [setId, req.user.id]
+        );
+        if (setRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-    const currentCycle = set.cycles[set.cycles.length - 1];
-    if (!currentCycle || currentCycle.completedAt) {
-        return res.status(400).json({ error: 'Không có cycle đang hoạt động. Hãy bắt đầu cycle mới.' });
+        const { rows: cycleRows } = await pool.query(
+            'SELECT * FROM cycles WHERE set_id = $1 AND completed_at IS NULL ORDER BY cycle_number DESC LIMIT 1',
+            [setId]
+        );
+        if (cycleRows.length === 0) {
+            return res.status(400).json({ error: 'Không có cycle đang hoạt động. Hãy bắt đầu cycle mới.' });
+        }
+
+        const sessionId = generateId();
+        await pool.query(
+            'INSERT INTO training_sessions (id, cycle_id) VALUES ($1, $2)',
+            [sessionId, cycleRows[0].id]
+        );
+
+        res.json({
+            session: {
+                id: sessionId, startedAt: new Date().toISOString(), endedAt: null,
+                duration: 0, puzzlesAttempted: 0, puzzlesSolved: 0, attempts: []
+            },
+            cycleNumber: cycleRows[0].cycle_number
+        });
+    } catch (err) {
+        console.error('Create session error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    const session = {
-        id: generateId(),
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        duration: 0,
-        puzzlesAttempted: 0,
-        puzzlesSolved: 0,
-        attempts: []
-    };
-
-    currentCycle.sessions.push(session);
-    writeWoodpecker(data);
-    res.json({ session, cycleNumber: currentCycle.cycleNumber });
 });
 
 // Record a puzzle attempt
-app.post('/api/woodpecker/sessions/:sessionId/attempt', authMiddleware, (req, res) => {
+app.post('/api/woodpecker/sessions/:sessionId/attempt', authMiddleware, async (req, res) => {
     const { setId, puzzleIndex, correct, timeMs } = req.body;
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === setId && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+    try {
+        // Verify ownership
+        const { rows: setRows } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            [setId, req.user.id]
+        );
+        if (setRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-    const currentCycle = set.cycles[set.cycles.length - 1];
-    if (!currentCycle) return res.status(400).json({ error: 'Không có cycle đang hoạt động' });
+        // Record attempt
+        await pool.query(
+            'INSERT INTO attempts (session_id, puzzle_index, correct, time_ms) VALUES ($1, $2, $3, $4)',
+            [req.params.sessionId, puzzleIndex, correct, timeMs]
+        );
 
-    const session = currentCycle.sessions.find(s => s.id === req.params.sessionId);
-    if (!session) return res.status(404).json({ error: 'Không tìm thấy session' });
+        // Update session counts
+        const { rows: counts } = await pool.query(
+            `SELECT COUNT(*) AS attempted, COUNT(*) FILTER (WHERE correct = true) AS solved
+             FROM attempts WHERE session_id = $1`,
+            [req.params.sessionId]
+        );
 
-    session.attempts.push({ puzzleIndex, correct, timeMs, recordedAt: new Date().toISOString() });
-    session.puzzlesAttempted = session.attempts.length;
-    session.puzzlesSolved = session.attempts.filter(a => a.correct).length;
+        await pool.query(
+            'UPDATE training_sessions SET puzzles_attempted = $1, puzzles_solved = $2 WHERE id = $3',
+            [parseInt(counts[0].attempted), parseInt(counts[0].solved), req.params.sessionId]
+        );
 
-    writeWoodpecker(data);
-    res.json({ attempt: session.attempts[session.attempts.length - 1], session });
+        res.json({
+            attempt: { puzzleIndex, correct, timeMs, recordedAt: new Date().toISOString() },
+            session: {
+                id: req.params.sessionId,
+                puzzlesAttempted: parseInt(counts[0].attempted),
+                puzzlesSolved: parseInt(counts[0].solved)
+            }
+        });
+    } catch (err) {
+        console.error('Record attempt error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
 // End a session
-app.put('/api/woodpecker/sessions/:sessionId', authMiddleware, (req, res) => {
+app.put('/api/woodpecker/sessions/:sessionId', authMiddleware, async (req, res) => {
     const { setId, duration } = req.body;
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === setId && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+    try {
+        const { rows: setRows } = await pool.query(
+            'SELECT id FROM puzzle_sets WHERE id = $1 AND assigned_to = $2',
+            [setId, req.user.id]
+        );
+        if (setRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
 
-    const currentCycle = set.cycles[set.cycles.length - 1];
-    if (!currentCycle) return res.status(400).json({ error: 'Không có cycle đang hoạt động' });
+        await pool.query(
+            'UPDATE training_sessions SET ended_at = NOW(), duration = $1 WHERE id = $2',
+            [duration || 0, req.params.sessionId]
+        );
 
-    const session = currentCycle.sessions.find(s => s.id === req.params.sessionId);
-    if (!session) return res.status(404).json({ error: 'Không tìm thấy session' });
+        const { rows } = await pool.query('SELECT * FROM training_sessions WHERE id = $1', [req.params.sessionId]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy session' });
 
-    session.endedAt = new Date().toISOString();
-    session.duration = duration || Math.round((new Date(session.endedAt) - new Date(session.startedAt)) / 1000);
-
-    writeWoodpecker(data);
-    res.json(session);
+        const s = rows[0];
+        res.json({
+            id: s.id, startedAt: s.started_at, endedAt: s.ended_at,
+            duration: s.duration, puzzlesAttempted: s.puzzles_attempted, puzzlesSolved: s.puzzles_solved
+        });
+    } catch (err) {
+        console.error('End session error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
-// Beacon endpoint for saving session on page unload (no auth header possible)
-app.post('/api/woodpecker/sessions/:sessionId/end', (req, res) => {
+// Beacon endpoint for saving session on page unload
+app.post('/api/woodpecker/sessions/:sessionId/end', async (req, res) => {
     const { setId, duration } = req.body;
     if (!setId) return res.status(400).json({ error: 'Missing setId' });
 
-    const data = readWoodpecker();
-    // Find the session across all puzzle sets (beacon can't send auth)
-    for (const set of data.puzzleSets) {
-        if (set.id !== setId) continue;
-        const currentCycle = set.cycles[set.cycles.length - 1];
-        if (!currentCycle) continue;
-        const session = currentCycle.sessions.find(s => s.id === req.params.sessionId);
-        if (!session) continue;
-        if (!session.endedAt) {
-            session.endedAt = new Date().toISOString();
-            session.duration = duration || Math.round((new Date(session.endedAt) - new Date(session.startedAt)) / 1000);
-            writeWoodpecker(data);
+    try {
+        const { rows } = await pool.query(
+            'SELECT id, ended_at FROM training_sessions WHERE id = $1', [req.params.sessionId]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+
+        if (!rows[0].ended_at) {
+            await pool.query(
+                'UPDATE training_sessions SET ended_at = NOW(), duration = $1 WHERE id = $2',
+                [duration || 0, req.params.sessionId]
+            );
         }
-        return res.json({ ok: true });
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('Beacon end error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-    res.status(404).json({ error: 'Session not found' });
 });
 
 // Get stats for a puzzle set
-app.get('/api/woodpecker/stats/:setId', authMiddleware, (req, res) => {
-    const data = readWoodpecker();
-    const set = data.puzzleSets.find(s => s.id === req.params.setId && s.assignedTo === req.user.id);
-    if (!set) return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+app.get('/api/woodpecker/stats/:setId', authMiddleware, async (req, res) => {
+    try {
+        const set = await buildSetWithCycles(req.params.setId);
+        if (!set || set.assignedTo !== req.user.id) {
+            return res.status(404).json({ error: 'Không tìm thấy puzzle set' });
+        }
 
-    let totalTime = 0;
-    let totalAttempted = 0;
-    let totalSolved = 0;
-    let totalSessions = 0;
+        let totalTime = 0, totalAttempted = 0, totalSolved = 0, totalSessions = 0;
 
-    const cycleStats = set.cycles.map(cycle => {
-        let cycleTime = 0;
-        let cycleAttempted = 0;
-        let cycleSolved = 0;
+        const cycleStats = set.cycles.map(cycle => {
+            let cycleTime = 0, cycleAttempted = 0, cycleSolved = 0;
 
-        const sessionStats = cycle.sessions.map(session => {
-            const dur = session.duration || 0;
-            cycleTime += dur;
-            cycleAttempted += session.puzzlesAttempted;
-            cycleSolved += session.puzzlesSolved;
-            totalSessions++;
+            const sessionStats = cycle.sessions.map(session => {
+                const dur = session.duration || 0;
+                cycleTime += dur;
+                cycleAttempted += session.puzzlesAttempted;
+                cycleSolved += session.puzzlesSolved;
+                totalSessions++;
+
+                return {
+                    id: session.id, startedAt: session.startedAt,
+                    puzzlesAttempted: session.puzzlesAttempted,
+                    puzzlesSolved: session.puzzlesSolved,
+                    successRate: session.puzzlesAttempted > 0
+                        ? (session.puzzlesSolved / session.puzzlesAttempted * 100).toFixed(1) : '0.0',
+                    duration: dur,
+                    ppm: dur > 0 ? (session.puzzlesSolved / (dur / 60)).toFixed(2) : '0.00'
+                };
+            });
+
+            totalTime += cycleTime;
+            totalAttempted += cycleAttempted;
+            totalSolved += cycleSolved;
 
             return {
-                id: session.id,
-                startedAt: session.startedAt,
-                puzzlesAttempted: session.puzzlesAttempted,
-                puzzlesSolved: session.puzzlesSolved,
-                successRate: session.puzzlesAttempted > 0 ? (session.puzzlesSolved / session.puzzlesAttempted * 100).toFixed(1) : '0.0',
-                duration: dur,
-                ppm: dur > 0 ? (session.puzzlesSolved / (dur / 60)).toFixed(2) : '0.00'
+                cycleNumber: cycle.cycleNumber, targetDays: cycle.targetDays,
+                startedAt: cycle.startedAt, completedAt: cycle.completedAt,
+                totalTime: cycleTime, puzzlesAttempted: cycleAttempted, puzzlesSolved: cycleSolved,
+                successRate: cycleAttempted > 0 ? (cycleSolved / cycleAttempted * 100).toFixed(1) : '0.0',
+                ppm: cycleTime > 0 ? (cycleSolved / (cycleTime / 60)).toFixed(2) : '0.00',
+                sessions: sessionStats
             };
         });
 
-        totalTime += cycleTime;
-        totalAttempted += cycleAttempted;
-        totalSolved += cycleSolved;
-
-        return {
-            cycleNumber: cycle.cycleNumber,
-            targetDays: cycle.targetDays,
-            startedAt: cycle.startedAt,
-            completedAt: cycle.completedAt,
-            totalTime: cycleTime,
-            puzzlesAttempted: cycleAttempted,
-            puzzlesSolved: cycleSolved,
-            successRate: cycleAttempted > 0 ? (cycleSolved / cycleAttempted * 100).toFixed(1) : '0.0',
-            ppm: cycleTime > 0 ? (cycleSolved / (cycleTime / 60)).toFixed(2) : '0.00',
-            sessions: sessionStats
-        };
-    });
-
-    res.json({
-        setId: set.id,
-        setName: set.name,
-        puzzleCount: set.puzzleCount,
-        overall: {
-            totalTime,
-            totalSessions,
-            puzzlesAttempted: totalAttempted,
-            puzzlesSolved: totalSolved,
-            successRate: totalAttempted > 0 ? (totalSolved / totalAttempted * 100).toFixed(1) : '0.0',
-            ppm: totalTime > 0 ? (totalSolved / (totalTime / 60)).toFixed(2) : '0.00'
-        },
-        cycles: cycleStats,
-        currentCycle: set.cycles.length > 0 ? set.cycles[set.cycles.length - 1].cycleNumber : 0,
-        totalCycles: 7
-    });
-});
-
-// ===== EXISTING COURSE API (unchanged) =====
-
-app.get('/api/courses', (req, res) => {
-    const data = readCourses();
-    res.json(data.courses);
-});
-
-app.post('/api/courses', (req, res) => {
-    const data = readCourses();
-    const course = {
-        id: generateId(),
-        name: req.body.name || 'Khóa học mới',
-        description: req.body.description || '',
-        icon: req.body.icon || '♞',
-        chapters: [],
-        createdAt: new Date().toISOString()
-    };
-    data.courses.push(course);
-    writeCourses(data);
-    res.json(course);
-});
-
-app.put('/api/courses/:id', (req, res) => {
-    const data = readCourses();
-    const course = data.courses.find(c => c.id === req.params.id);
-    if (!course) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
-
-    if (req.body.name !== undefined) course.name = req.body.name;
-    if (req.body.description !== undefined) course.description = req.body.description;
-    if (req.body.icon !== undefined) course.icon = req.body.icon;
-    writeCourses(data);
-    res.json(course);
-});
-
-app.delete('/api/courses/:id', (req, res) => {
-    const data = readCourses();
-    const idx = data.courses.findIndex(c => c.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
-
-    const course = data.courses[idx];
-    for (const ch of course.chapters) {
-        const pgnPath = path.join(PGN_DIR, ch.pgnFile);
-        if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
+        res.json({
+            setId: set.id, setName: set.name, puzzleCount: set.puzzleCount,
+            overall: {
+                totalTime, totalSessions, puzzlesAttempted: totalAttempted, puzzlesSolved: totalSolved,
+                successRate: totalAttempted > 0 ? (totalSolved / totalAttempted * 100).toFixed(1) : '0.0',
+                ppm: totalTime > 0 ? (totalSolved / (totalTime / 60)).toFixed(2) : '0.00'
+            },
+            cycles: cycleStats,
+            currentCycle: set.cycles.length > 0 ? set.cycles[set.cycles.length - 1].cycleNumber : 0,
+            totalCycles: 7
+        });
+    } catch (err) {
+        console.error('Stats error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    data.courses.splice(idx, 1);
-    writeCourses(data);
-    res.json({ success: true });
 });
 
-app.get('/api/courses/:courseId/chapters', (req, res) => {
-    const data = readCourses();
-    const course = data.courses.find(c => c.id === req.params.courseId);
-    if (!course) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
-    res.json(course.chapters);
-});
+// ===== EXISTING COURSE API =====
 
-app.post('/api/courses/:courseId/chapters', upload.single('pgn'), (req, res) => {
-    const data = readCourses();
-    const course = data.courses.find(c => c.id === req.params.courseId);
-    if (!course) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
-
-    if (!req.file) return res.status(400).json({ error: 'Cần upload file PGN' });
-
-    const chapter = {
-        id: generateId(),
-        name: req.body.name || req.file.originalname.replace('.pgn', ''),
-        pgnFile: req.file.filename,
-        originalName: req.file.originalname,
-        lineCount: 0,
-        createdAt: new Date().toISOString()
-    };
-
+app.get('/api/courses', async (req, res) => {
     try {
-        const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
-        const eventCount = (content.match(/\[Event\s/g) || []).length;
-        chapter.lineCount = eventCount;
-    } catch (e) {
-        console.warn('Could not count lines:', e.message);
+        const { rows: courses } = await pool.query('SELECT * FROM courses ORDER BY created_at ASC');
+        const result = [];
+        for (const c of courses) {
+            const { rows: chapters } = await pool.query(
+                'SELECT * FROM chapters WHERE course_id = $1 ORDER BY created_at ASC', [c.id]
+            );
+            result.push({
+                id: c.id, name: c.name, description: c.description, icon: c.icon,
+                createdAt: c.created_at,
+                chapters: chapters.map(ch => ({
+                    id: ch.id, name: ch.name, pgnFile: ch.pgn_file,
+                    originalName: ch.original_name, lineCount: ch.line_count, createdAt: ch.created_at
+                }))
+            });
+        }
+        res.json(result);
+    } catch (err) {
+        console.error('Get courses error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
-
-    course.chapters.push(chapter);
-    writeCourses(data);
-    res.json(chapter);
 });
 
-app.put('/api/chapters/:id', upload.single('pgn'), (req, res) => {
-    const data = readCourses();
-    let chapter = null;
-
-    for (const c of data.courses) {
-        const ch = c.chapters.find(ch => ch.id === req.params.id);
-        if (ch) { chapter = ch; break; }
+app.post('/api/courses', async (req, res) => {
+    try {
+        const id = generateId();
+        const { rows } = await pool.query(
+            `INSERT INTO courses (id, name, description, icon) VALUES ($1, $2, $3, $4) RETURNING *`,
+            [id, req.body.name || 'Khóa học mới', req.body.description || '', req.body.icon || '♞']
+        );
+        const c = rows[0];
+        res.json({ id: c.id, name: c.name, description: c.description, icon: c.icon, chapters: [], createdAt: c.created_at });
+    } catch (err) {
+        console.error('Create course error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
+});
 
-    if (!chapter) return res.status(404).json({ error: 'Không tìm thấy chương' });
+app.put('/api/courses/:id', async (req, res) => {
+    try {
+        const updates = [];
+        const params = [];
+        let idx = 1;
+        if (req.body.name !== undefined) { updates.push(`name = $${idx++}`); params.push(req.body.name); }
+        if (req.body.description !== undefined) { updates.push(`description = $${idx++}`); params.push(req.body.description); }
+        if (req.body.icon !== undefined) { updates.push(`icon = $${idx++}`); params.push(req.body.icon); }
 
-    if (req.body.name !== undefined) chapter.name = req.body.name;
+        if (updates.length === 0) return res.status(400).json({ error: 'Không có gì để cập nhật' });
 
-    if (req.file) {
-        const oldPath = path.join(PGN_DIR, chapter.pgnFile);
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        params.push(req.params.id);
+        const { rows } = await pool.query(
+            `UPDATE courses SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`, params
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
 
-        chapter.pgnFile = req.file.filename;
-        chapter.originalName = req.file.originalname;
+        const c = rows[0];
+        res.json({ id: c.id, name: c.name, description: c.description, icon: c.icon, createdAt: c.created_at });
+    } catch (err) {
+        console.error('Update course error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
 
+app.delete('/api/courses/:id', async (req, res) => {
+    try {
+        // Delete chapter PGN files
+        const { rows: chapters } = await pool.query(
+            'SELECT pgn_file FROM chapters WHERE course_id = $1', [req.params.id]
+        );
+        for (const ch of chapters) {
+            const pgnPath = path.join(PGN_DIR, ch.pgn_file);
+            if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
+        }
+
+        const { rowCount } = await pool.query('DELETE FROM courses WHERE id = $1', [req.params.id]);
+        if (rowCount === 0) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Delete course error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+app.get('/api/courses/:courseId/chapters', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT * FROM chapters WHERE course_id = $1 ORDER BY created_at ASC',
+            [req.params.courseId]
+        );
+        res.json(rows.map(ch => ({
+            id: ch.id, name: ch.name, pgnFile: ch.pgn_file,
+            originalName: ch.original_name, lineCount: ch.line_count, createdAt: ch.created_at
+        })));
+    } catch (err) {
+        console.error('Get chapters error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+app.post('/api/courses/:courseId/chapters', upload.single('pgn'), async (req, res) => {
+    try {
+        const { rows: courseCheck } = await pool.query('SELECT id FROM courses WHERE id = $1', [req.params.courseId]);
+        if (courseCheck.length === 0) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
+        if (!req.file) return res.status(400).json({ error: 'Cần upload file PGN' });
+
+        let lineCount = 0;
         try {
             const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
-            const eventCount = (content.match(/\[Event\s/g) || []).length;
-            chapter.lineCount = eventCount;
+            lineCount = (content.match(/\[Event\s/g) || []).length;
         } catch (e) {
             console.warn('Could not count lines:', e.message);
         }
-    }
 
-    writeCourses(data);
-    res.json(chapter);
+        const id = generateId();
+        const name = req.body.name || req.file.originalname.replace('.pgn', '');
+        await pool.query(
+            `INSERT INTO chapters (id, course_id, name, pgn_file, original_name, line_count)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [id, req.params.courseId, name, req.file.filename, req.file.originalname, lineCount]
+        );
+
+        res.json({ id, name, pgnFile: req.file.filename, originalName: req.file.originalname, lineCount, createdAt: new Date().toISOString() });
+    } catch (err) {
+        console.error('Create chapter error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
 });
 
-app.delete('/api/chapters/:id', (req, res) => {
-    const data = readCourses();
+app.put('/api/chapters/:id', upload.single('pgn'), async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM chapters WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
 
-    for (const course of data.courses) {
-        const idx = course.chapters.findIndex(ch => ch.id === req.params.id);
-        if (idx !== -1) {
-            const chapter = course.chapters[idx];
-            const pgnPath = path.join(PGN_DIR, chapter.pgnFile);
-            if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
+        const chapter = rows[0];
+        const updates = [];
+        const params = [];
+        let idx = 1;
 
-            course.chapters.splice(idx, 1);
-            writeCourses(data);
-            return res.json({ success: true });
+        if (req.body.name !== undefined) { updates.push(`name = $${idx++}`); params.push(req.body.name); }
+
+        if (req.file) {
+            // Delete old PGN
+            const oldPath = path.join(PGN_DIR, chapter.pgn_file);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+
+            updates.push(`pgn_file = $${idx++}`); params.push(req.file.filename);
+            updates.push(`original_name = $${idx++}`); params.push(req.file.originalname);
+
+            let lineCount = 0;
+            try {
+                const content = fs.readFileSync(path.join(PGN_DIR, req.file.filename), 'utf-8');
+                lineCount = (content.match(/\[Event\s/g) || []).length;
+            } catch (e) { console.warn('Could not count lines:', e.message); }
+
+            updates.push(`line_count = $${idx++}`); params.push(lineCount);
         }
+
+        if (updates.length > 0) {
+            params.push(req.params.id);
+            await pool.query(`UPDATE chapters SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+        }
+
+        const { rows: updated } = await pool.query('SELECT * FROM chapters WHERE id = $1', [req.params.id]);
+        const ch = updated[0];
+        res.json({ id: ch.id, name: ch.name, pgnFile: ch.pgn_file, originalName: ch.original_name, lineCount: ch.line_count, createdAt: ch.created_at });
+    } catch (err) {
+        console.error('Update chapter error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+app.delete('/api/chapters/:id', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT pgn_file FROM chapters WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
+
+        const pgnPath = path.join(PGN_DIR, rows[0].pgn_file);
+        if (fs.existsSync(pgnPath)) fs.unlinkSync(pgnPath);
+
+        await pool.query('DELETE FROM chapters WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Delete chapter error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+app.get('/api/chapters/:id/pgn', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT pgn_file FROM chapters WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chương' });
+
+        const pgnPath = path.join(PGN_DIR, rows[0].pgn_file);
+        if (!fs.existsSync(pgnPath)) return res.status(404).json({ error: 'File PGN không tồn tại' });
+
+        res.type('text/plain').send(fs.readFileSync(pgnPath, 'utf-8'));
+    } catch (err) {
+        console.error('Get chapter PGN error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+// ===== START SERVER =====
+async function start() {
+    try {
+        await initDB();
+        console.log('  ✓ Database initialized');
+    } catch (err) {
+        console.error('  ✗ Database init failed:', err.message);
+        console.log('  ℹ Make sure DATABASE_URL is set or PostgreSQL is running locally');
+        process.exit(1);
     }
 
-    res.status(404).json({ error: 'Không tìm thấy chương' });
-});
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`\n  ♞ Chess Trainer Server`);
+        console.log(`  → Main App:   http://localhost:${PORT}`);
+        console.log(`  → Woodpecker: http://localhost:${PORT}/woodpecker.html\n`);
+    });
+}
 
-app.get('/api/chapters/:id/pgn', (req, res) => {
-    const data = readCourses();
-    let chapter = null;
-
-    for (const c of data.courses) {
-        const ch = c.chapters.find(ch => ch.id === req.params.id);
-        if (ch) { chapter = ch; break; }
-    }
-
-    if (!chapter) return res.status(404).json({ error: 'Không tìm thấy chương' });
-
-    const pgnPath = path.join(PGN_DIR, chapter.pgnFile);
-    if (!fs.existsSync(pgnPath)) return res.status(404).json({ error: 'File PGN không tồn tại' });
-
-    res.type('text/plain').send(fs.readFileSync(pgnPath, 'utf-8'));
-});
-
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n  ♞ Chess Trainer Server`);
-    console.log(`  → Main App:   http://localhost:${PORT}`);
-    console.log(`  → Woodpecker: http://localhost:${PORT}/woodpecker.html\n`);
-});
+start();
