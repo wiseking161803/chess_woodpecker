@@ -723,6 +723,9 @@ class WoodpeckerApp {
                 this.board = new ChessBoard('wp-chessboard', { size: boardSize });
             }
 
+            // Apply saved board skin
+            this._applyCurrentSkin();
+
             // Initialize trainer
             this.trainer = new WoodpeckerTrainer(this.board);
             this.trainer.loadPuzzles(games);
@@ -1094,6 +1097,99 @@ class WoodpeckerApp {
         });
     }
 
+    // ===== BOARD SKINS =====
+    // Color psychology-based skins optimized for specific cognitive skills
+    static BOARD_SKINS = {
+        memory: {
+            name: '🧠 Trí nhớ',
+            desc: 'Tông ấm giúp ghi nhớ mẫu hình',
+            light: '#f0d9b5',  // warm wheat
+            dark: '#b58863',   // rich amber-brown
+            bg: '#2c1f14'      // deep brown
+        },
+        focus: {
+            name: '🎯 Tập trung',
+            desc: 'Tông lạnh giảm mỏi mắt',
+            light: '#dee3e6',  // cool silver-gray
+            dark: '#6b8cae',   // muted steel-blue
+            bg: '#1a2332'      // deep navy
+        },
+        speed: {
+            name: '⚡ Tốc độ',
+            desc: 'Tương phản cao, quét nhanh',
+            light: '#eeeed2',  // bright cream
+            dark: '#769656',   // vivid green
+            bg: '#302e2b'      // dark charcoal
+        }
+    };
+
+    showSkinSelector() {
+        const currentSkin = localStorage.getItem('wp_board_skin') || 'memory';
+        const skinsHtml = Object.entries(WoodpeckerApp.BOARD_SKINS).map(([key, skin]) => {
+            const isActive = key === currentSkin;
+            // Mini 4x4 chessboard preview
+            let miniBoard = '';
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    const isLight = (r + c) % 2 === 0;
+                    miniBoard += `<div style="width:16px;height:16px;background:${isLight ? skin.light : skin.dark};"></div>`;
+                }
+            }
+            return `
+                <div onclick="wpApp.applySkin('${key}')" style="cursor:pointer;padding:12px;border-radius:10px;border:2px solid ${isActive ? 'var(--primary)' : 'var(--border)'};background:${isActive ? 'rgba(79,70,229,0.08)' : 'transparent'};text-align:center;transition:all 0.2s;">
+                    <div style="display:grid;grid-template-columns:repeat(4,16px);gap:0;border-radius:4px;overflow:hidden;margin:0 auto;width:64px;height:64px;">${miniBoard}</div>
+                    <div style="font-weight:700;margin-top:8px;font-size:0.95rem;">${skin.name}</div>
+                    <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:2px;">${skin.desc}</div>
+                </div>
+            `;
+        }).join('');
+
+        this._openModal('🎨 Chọn Skin bàn cờ', `
+            <div style="max-width:420px;">
+                <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:12px;">Chọn bộ màu tối ưu cho kĩ năng bạn muốn rèn luyện:</p>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                    ${skinsHtml}
+                </div>
+            </div>
+        `);
+    }
+
+    applySkin(skinKey) {
+        const skin = WoodpeckerApp.BOARD_SKINS[skinKey];
+        if (!skin) return;
+
+        localStorage.setItem('wp_board_skin', skinKey);
+
+        // Apply to board if visible
+        if (this.board) {
+            this.board.setSkin(skin.light, skin.dark);
+        }
+
+        // Apply background to training view
+        const trainingView = document.getElementById('view-training');
+        if (trainingView) {
+            trainingView.style.background = skin.bg;
+        }
+
+        this.closeModal();
+        this.showToast(`Đã chọn skin: ${skin.name}`, 'success');
+    }
+
+    _applyCurrentSkin() {
+        const skinKey = localStorage.getItem('wp_board_skin') || 'memory';
+        const skin = WoodpeckerApp.BOARD_SKINS[skinKey];
+        if (!skin) return;
+
+        if (this.board) {
+            this.board.setSkin(skin.light, skin.dark);
+        }
+
+        const trainingView = document.getElementById('view-training');
+        if (trainingView) {
+            trainingView.style.background = skin.bg;
+        }
+    }
+
     // ===== ADMIN VIEW =====
     async showAdmin() {
         if (!this.user || this.user.role !== 'admin') return;
@@ -1463,27 +1559,27 @@ class WoodpeckerApp {
 <title>Thống kê - ${today}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;padding:12px;background:#fff;font-size:11px}
-.header{text-align:center;margin-bottom:10px;border-bottom:2px solid #4f46e5;padding-bottom:6px}
-.header h1{font-size:14px;color:#4f46e5}
-.header p{font-size:10px;color:#666;margin-top:2px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.card{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;break-inside:avoid}
-.card-header{font-size:12px;font-weight:700;border-bottom:1.5px solid #4f46e5;padding-bottom:4px;margin-bottom:5px}
-.uname{font-weight:400;color:#888;font-size:10px}
-.badges{display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap}
-.badge{font-size:10px;padding:1px 5px;border-radius:4px;background:#f3f4f6}
+body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;padding:14px;background:#fff;font-size:13px}
+.header{text-align:center;margin-bottom:12px;border-bottom:2px solid #4f46e5;padding-bottom:8px}
+.header h1{font-size:17px;color:#4f46e5}
+.header p{font-size:12px;color:#666;margin-top:3px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{border:1px solid #d1d5db;border-radius:10px;padding:10px 14px;break-inside:avoid}
+.card-header{font-size:15px;font-weight:700;border-bottom:1.5px solid #4f46e5;padding-bottom:5px;margin-bottom:6px}
+.uname{font-weight:400;color:#888;font-size:12px}
+.badges{display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+.badge{font-size:12px;padding:2px 7px;border-radius:5px;background:#f3f4f6}
 .b-fire{background:#fef3c7}.b-best{background:#d1fae5}.b-days{background:#dbeafe}.b-today{background:#ede9fe}
-.stats-row{display:flex;gap:8px;flex-wrap:wrap;font-size:10px;margin-bottom:5px;padding:3px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
+.stats-row{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:6px;padding:4px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
 .stats-row b{color:#4f46e5}
-.sets-section{font-size:10px}
-.set-row{display:flex;align-items:center;gap:6px;padding:2px 0}
+.sets-section{font-size:12px}
+.set-row{display:flex;align-items:center;gap:8px;padding:3px 0}
 .set-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.set-progress{font-weight:600;white-space:nowrap;font-size:9px;color:#4f46e5}
-.mini-bar{width:40px;height:4px;background:#e5e7eb;border-radius:2px;overflow:hidden}
-.mini-fill{height:100%;background:#4f46e5;border-radius:2px}
+.set-progress{font-weight:600;white-space:nowrap;font-size:11px;color:#4f46e5}
+.mini-bar{width:50px;height:5px;background:#e5e7eb;border-radius:3px;overflow:hidden}
+.mini-fill{height:100%;background:#4f46e5;border-radius:3px}
 .no-sets{color:#aaa;font-style:italic}
-@media print{body{padding:0}.grid{gap:8px}.card{border:1px solid #bbb}}
+@media print{body{padding:0}.grid{gap:10px}.card{border:1px solid #bbb}}
 </style>
 </head>
 <body>

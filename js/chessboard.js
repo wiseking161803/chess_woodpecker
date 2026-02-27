@@ -626,6 +626,22 @@ class ChessBoard {
             this.showLastMove(this.lastMove.from, this.lastMove.to);
         }
     }
+
+    /**
+     * Change board skin colors and redraw
+     */
+    setSkin(lightColor, darkColor) {
+        this.lightColor = lightColor;
+        this.darkColor = darkColor;
+        this._drawSquares();
+        this._drawCoordinates();
+        if (this.position) {
+            this._drawPieces();
+        }
+        if (this.lastMove) {
+            this.showLastMove(this.lastMove.from, this.lastMove.to);
+        }
+    }
 }
 
 if (typeof module !== 'undefined' && module.exports) {
