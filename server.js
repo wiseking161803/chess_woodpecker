@@ -632,9 +632,11 @@ app.post('/api/woodpecker/sessions/:sessionId/attempt', authMiddleware, async (r
             [req.params.sessionId, puzzleIndex, correct, timeMs]
         );
 
-        // Update session counts
+        // Update session counts - count unique puzzles attempted and solved
         const { rows: counts } = await pool.query(
-            `SELECT COUNT(*) AS attempted, COUNT(*) FILTER (WHERE correct = true) AS solved
+            `SELECT 
+                COUNT(DISTINCT puzzle_index) AS attempted,
+                COUNT(DISTINCT CASE WHEN correct = true THEN puzzle_index END) AS solved
              FROM attempts WHERE session_id = $1`,
             [req.params.sessionId]
         );
