@@ -111,6 +111,15 @@ async function initDB() {
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
+
+            -- Daily completions for streak tracking
+            CREATE TABLE IF NOT EXISTS daily_completions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                completed_date DATE NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, completed_date)
+            );
         `);
 
         // Create default admin if no users exist

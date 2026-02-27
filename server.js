@@ -787,6 +787,21 @@ app.put('/api/woodpecker/sessions/:sessionId', authMiddleware, async (req, res) 
             [duration || 0, req.params.sessionId]
         );
 
+        // Record daily completion if session was full (>= 570 seconds ≈ 9.5 min)
+        if (duration >= 570) {
+            try {
+                const dcId = generateId();
+                await pool.query(
+                    `INSERT INTO daily_completions (id, user_id, completed_date)
+                     VALUES ($1, $2, CURRENT_DATE)
+                     ON CONFLICT (user_id, completed_date) DO NOTHING`,
+                    [dcId, req.user.id]
+                );
+            } catch (e) {
+                console.warn('Daily completion record failed:', e.message);
+            }
+        }
+
         const { rows } = await pool.query('SELECT * FROM training_sessions WHERE id = $1', [req.params.sessionId]);
         if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy session' });
 
@@ -797,6 +812,72 @@ app.put('/api/woodpecker/sessions/:sessionId', authMiddleware, async (req, res) 
         });
     } catch (err) {
         console.error('End session error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+// Get user's streak info
+app.get('/api/woodpecker/streak', authMiddleware, async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT completed_date FROM daily_completions
+             WHERE user_id = $1 ORDER BY completed_date DESC`,
+            [req.user.id]
+        );
+
+        if (rows.length === 0) {
+            return res.json({ currentStreak: 0, longestStreak: 0, totalDays: 0, completedToday: false });
+        }
+
+        const dates = rows.map(r => {
+            const d = new Date(r.completed_date);
+            return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        });
+
+        const today = new Date();
+        const todayMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+        const oneDayMs = 86400000;
+
+        const completedToday = dates[0] === todayMs;
+
+        // Calculate current streak (consecutive days ending at today or yesterday)
+        let currentStreak = 0;
+        let checkDate = completedToday ? todayMs : todayMs - oneDayMs;
+
+        for (const d of dates) {
+            if (d === checkDate) {
+                currentStreak++;
+                checkDate -= oneDayMs;
+            } else if (d < checkDate) {
+                break;
+            }
+        }
+
+        // If streak doesn't start from today or yesterday, it's 0
+        if (!completedToday && dates[0] !== todayMs - oneDayMs) {
+            currentStreak = 0;
+        }
+
+        // Calculate longest streak
+        let longestStreak = 1;
+        let tempStreak = 1;
+        for (let i = 1; i < dates.length; i++) {
+            if (dates[i - 1] - dates[i] === oneDayMs) {
+                tempStreak++;
+                longestStreak = Math.max(longestStreak, tempStreak);
+            } else {
+                tempStreak = 1;
+            }
+        }
+
+        res.json({
+            currentStreak,
+            longestStreak,
+            totalDays: dates.length,
+            completedToday
+        });
+    } catch (err) {
+        console.error('Streak error:', err);
         res.status(500).json({ error: 'Lỗi server' });
     }
 });

@@ -276,8 +276,45 @@ class WoodpeckerApp {
         const grid = document.getElementById('wp-sets-grid');
         grid.innerHTML = `<div class="wp-loading"><span class="wp-spinner"></span> ${t('loading')}</div>`;
 
+        // Streak container
+        let streakContainer = document.getElementById('wp-streak-bar');
+        if (!streakContainer) {
+            streakContainer = document.createElement('div');
+            streakContainer.id = 'wp-streak-bar';
+            grid.parentElement.insertBefore(streakContainer, grid);
+        }
+        streakContainer.innerHTML = '';
+
         try {
-            const sets = await this._api('/api/woodpecker/sets');
+            const [sets, streak] = await Promise.all([
+                this._api('/api/woodpecker/sets'),
+                this._api('/api/woodpecker/streak').catch(() => ({ currentStreak: 0, longestStreak: 0, totalDays: 0, completedToday: false }))
+            ]);
+
+            // Render streak bar
+            streakContainer.innerHTML = `
+                <div class="wp-streak-card ${streak.completedToday ? 'completed' : ''}">
+                    <div class="wp-streak-fire">${streak.currentStreak > 0 ? '🔥' : '❄️'}</div>
+                    <div class="wp-streak-info">
+                        <div class="wp-streak-count">${streak.currentStreak} ngày</div>
+                        <div class="wp-streak-label">Streak hiện tại</div>
+                    </div>
+                    <div class="wp-streak-stats">
+                        <div class="wp-streak-stat">
+                            <span class="wp-streak-stat-value">🏆 ${streak.longestStreak}</span>
+                            <span class="wp-streak-stat-label">Dài nhất</span>
+                        </div>
+                        <div class="wp-streak-stat">
+                            <span class="wp-streak-stat-value">📅 ${streak.totalDays}</span>
+                            <span class="wp-streak-stat-label">Tổng ngày</span>
+                        </div>
+                        <div class="wp-streak-stat">
+                            <span class="wp-streak-stat-value">${streak.completedToday ? '✅' : '⬜'}</span>
+                            <span class="wp-streak-stat-label">Hôm nay</span>
+                        </div>
+                    </div>
+                </div>
+            `;
 
             if (sets.length === 0) {
                 grid.innerHTML = `
