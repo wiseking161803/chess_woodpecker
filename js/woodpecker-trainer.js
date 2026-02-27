@@ -350,11 +350,6 @@ class WoodpeckerTrainer {
         flash.className = 'wp-hint-flash ' + type + ' show';
         flash.textContent = type === 'correct' ? t('train_correct') : t('train_incorrect');
 
-        // Play puzzle-level feedback sound on puzzle complete
-        if (type === 'correct' && typeof soundManager !== 'undefined') {
-            soundManager.playCorrect();
-        }
-
         setTimeout(() => {
             flash.classList.remove('show');
         }, 800);
@@ -366,6 +361,11 @@ class WoodpeckerTrainer {
     _completePuzzle() {
         const timeMs = Date.now() - this.puzzleStartTime;
         const correct = this.mistakes === 0;
+
+        // Play puzzle completion sound
+        if (typeof soundManager !== 'undefined') {
+            correct ? soundManager.playCorrect() : soundManager.playIncorrect();
+        }
 
         const attempt = {
             puzzleIndex: this.currentPuzzleIndex,

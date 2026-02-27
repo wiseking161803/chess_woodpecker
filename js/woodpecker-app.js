@@ -108,8 +108,10 @@ class WoodpeckerApp {
             this.board.darkColor = cs.getPropertyValue('--board-dark').trim();
             this.board.highlightFromColor = cs.getPropertyValue('--board-highlight').trim();
             this.board.highlightToColor = cs.getPropertyValue('--board-highlight').trim();
-            this.board._drawBoard();
+            this.board._drawSquares();
+            this.board._drawCoordinates();
             if (this.board.position) this.board._drawPieces(false);
+            if (this.board.lastMove) this.board.showLastMove(this.board.lastMove.from, this.board.lastMove.to);
         }
     }
 
