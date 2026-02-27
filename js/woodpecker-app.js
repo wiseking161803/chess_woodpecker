@@ -991,48 +991,8 @@ class WoodpeckerApp {
 
     async _confirmEndSession() {
         this.closeModal();
-
         if (!this.trainer) return;
-
-        // Stop the timer and mark inactive immediately
-        if (this.trainer.timerInterval) {
-            clearInterval(this.trainer.timerInterval);
-            this.trainer.timerInterval = null;
-        }
-        this.trainer.isActive = false;
-
-        const duration = Math.floor((Date.now() - this.trainer.sessionStartTime) / 1000);
-        const sessionData = {
-            reason: 'manual',
-            duration: Math.min(duration, this.trainer.SESSION_DURATION),
-            attempts: this.trainer.sessionAttempts,
-            puzzlesAttempted: this.trainer.sessionAttempts.length,
-            puzzlesSolved: this.trainer.sessionAttempts.filter(a => a.correct).length
-        };
-
-        // Save session to server (await to ensure data is persisted)
-        try {
-            await this._api(`/api/woodpecker/sessions/${this.currentSessionId}`, {
-                method: 'PUT',
-                body: {
-                    setId: this.currentSetId,
-                    duration: sessionData.duration
-                }
-            });
-        } catch (err) {
-            console.warn('Failed to save session:', err);
-        }
-
-        // Check if all puzzles in cycle are solved
-        const allSolved = this.solvedPuzzleIndices.size >= this.trainer.puzzles.length;
-        if (allSolved) {
-            try {
-                await this._api(`/api/woodpecker/sets/${this.currentSetId}/complete-cycle`, { method: 'POST' });
-            } catch { }
-        }
-
-        // Show summary
-        this._showSessionSummary(sessionData, allSolved);
+        this.trainer.endSession('manual');
     }
 
     /**
