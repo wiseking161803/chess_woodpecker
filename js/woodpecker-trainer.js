@@ -337,37 +337,41 @@ class WoodpeckerTrainer {
 
         // Check if there are more pending variations at this level
         if (saved.pendingVariations.length > 0) {
-            const nextVariation = saved.pendingVariations.shift();
-            const totalVariations = saved.moves[saved.moveIndex].variations.length;
-            const variationNumber = totalVariations - saved.pendingVariations.length;
+            // Pause 1s at end of variation before entering next one
+            setTimeout(() => {
+                const nextVariation = saved.pendingVariations.shift();
+                const totalVariations = saved.moves[saved.moveIndex].variations.length;
+                const variationNumber = totalVariations - saved.pendingVariations.length;
 
-            // Push context back for remaining variations
-            this.moveStack.push({
-                moves: saved.moves,
-                moveIndex: saved.moveIndex,
-                chessFen: saved.chessFen,
-                pendingVariations: saved.pendingVariations,
-                variationsDone: true
-            });
-
-            // Enter next variation from the same branch point
-            this.currentMoves = nextVariation;
-            this.moveIndex = 0;
-            this.isInVariation = true;
-
-            this.chess.load(saved.chessFen);
-            this.board.clearLastMove();
-            this.board.setPosition(this.chess);
-
-            if (this.onStatusChange) {
-                this.onStatusChange({
-                    status: 'entering_variation',
-                    totalVariations,
-                    variationNumber
+                // Push context back for remaining variations
+                this.moveStack.push({
+                    moves: saved.moves,
+                    moveIndex: saved.moveIndex,
+                    chessFen: saved.chessFen,
+                    pendingVariations: saved.pendingVariations,
+                    variationsDone: true
                 });
-            }
 
-            setTimeout(() => this._processNextMove(), 800);
+                // Enter next variation from the same branch point
+                this.currentMoves = nextVariation;
+                this.moveIndex = 0;
+                this.isInVariation = true;
+
+                this.chess.load(saved.chessFen);
+                this.board.clearLastMove();
+                this.board.setPosition(this.chess);
+
+                if (this.onStatusChange) {
+                    this.onStatusChange({
+                        status: 'entering_variation',
+                        totalVariations,
+                        variationNumber
+                    });
+                }
+
+                // Pause 1s after restoring position before auto-playing
+                setTimeout(() => this._processNextMove(), 1000);
+            }, 1000);
         } else if (saved.playerVariation) {
             // Returning from a player-initiated good variation
             this.currentMoves = saved.moves;
@@ -395,22 +399,25 @@ class WoodpeckerTrainer {
                 }
             }, 2000);
         } else {
-            // All opponent variations done at this level — restore mainline
-            this.currentMoves = saved.moves;
-            this.moveIndex = saved.moveIndex;
-            this._variationsDone = saved.variationsDone;
-            this.isInVariation = this.moveStack.length > 0;
+            // Pause 1s at end of variation before restoring mainline
+            setTimeout(() => {
+                // All opponent variations done at this level — restore mainline
+                this.currentMoves = saved.moves;
+                this.moveIndex = saved.moveIndex;
+                this._variationsDone = saved.variationsDone;
+                this.isInVariation = this.moveStack.length > 0;
 
-            this.chess.load(saved.chessFen);
-            this.board.clearLastMove();
-            this.board.setPosition(this.chess);
+                this.chess.load(saved.chessFen);
+                this.board.clearLastMove();
+                this.board.setPosition(this.chess);
 
-            if (this.onStatusChange) {
-                this.onStatusChange({ status: 'exiting_variation' });
-            }
+                if (this.onStatusChange) {
+                    this.onStatusChange({ status: 'exiting_variation' });
+                }
 
-            // Continue with the mainline move (now with variations marked done)
-            setTimeout(() => this._processNextMove(), 1000);
+                // Pause 1s after restoring so user recognizes the position
+                setTimeout(() => this._processNextMove(), 1000);
+            }, 1000);
         }
     }
 
