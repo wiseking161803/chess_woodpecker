@@ -228,6 +228,16 @@ class PGNParser {
                 continue;
             }
 
+            // Annotation symbols (!, ?, !!, ??, !?, ?!) → convert to NAGs
+            // Check multi-char first to avoid partial matches
+            const annotMatch = text.slice(i).match(/^(\?\?|\?\!|\!\?|\!\!|\?|\!)/);
+            if (annotMatch) {
+                const nagMap = { '!': 1, '?': 2, '!!': 3, '??': 4, '!?': 5, '?!': 6 };
+                tokens.push({ type: 'nag', value: nagMap[annotMatch[1]] });
+                i += annotMatch[1].length;
+                continue;
+            }
+
             // Skip unknown characters
             i++;
         }

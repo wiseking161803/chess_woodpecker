@@ -922,14 +922,45 @@ class WoodpeckerApp {
         const statusEl = document.getElementById('wp-training-status');
         if (!statusEl) return;
 
+        const t = (k, ...a) => typeof i18n !== 'undefined' ? i18n.t(k, ...a) : k;
+
         switch (data.status) {
             case 'your_turn':
-                statusEl.textContent = typeof i18n !== 'undefined' ? i18n.t('train_your_turn') : 'Lượt của bạn!';
-                statusEl.className = 'wp-training-status thinking';
+                if (data.isVariation) {
+                    statusEl.textContent = t('train_your_turn_variation') || '📌 Biến phụ — Lượt của bạn!';
+                    statusEl.className = 'wp-training-status thinking variation';
+                } else {
+                    statusEl.textContent = t('train_your_turn') || 'Lượt của bạn!';
+                    statusEl.className = 'wp-training-status thinking';
+                }
                 break;
             case 'incorrect':
-                statusEl.textContent = typeof i18n !== 'undefined' ? i18n.t('train_wrong_retry', data.mistakes) : `Sai! (${data.mistakes} lỗi)`;
+                statusEl.textContent = t('train_wrong_retry', data.mistakes) || `Sai! (${data.mistakes} lỗi)`;
                 statusEl.className = 'wp-training-status incorrect';
+                break;
+            case 'entering_variation':
+                if (data.totalVariations > 1) {
+                    statusEl.textContent = t('train_entering_variation_n', data.variationNumber, data.totalVariations);
+                } else {
+                    statusEl.textContent = t('train_entering_variation');
+                }
+                statusEl.className = 'wp-training-status variation';
+                break;
+            case 'exiting_variation':
+                statusEl.textContent = t('train_exiting_variation');
+                statusEl.className = 'wp-training-status variation-exit';
+                break;
+            case 'player_bad_variation':
+                statusEl.textContent = t('train_bad_variation');
+                statusEl.className = 'wp-training-status incorrect';
+                break;
+            case 'player_good_variation':
+                statusEl.textContent = t('train_good_variation');
+                statusEl.className = 'wp-training-status variation';
+                break;
+            case 'return_to_mainline':
+                statusEl.textContent = t('train_return_mainline');
+                statusEl.className = 'wp-training-status variation-exit';
                 break;
         }
     }

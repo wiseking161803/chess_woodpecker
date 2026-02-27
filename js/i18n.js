@@ -70,6 +70,13 @@ const i18n = {
             train_ppm: 'PPM',
             train_end_session: '⏹ Kết thúc Session',
             train_flip: 'Xoay bàn cờ',
+            train_your_turn_variation: '📌 Biến phụ — Lượt của bạn!',
+            train_entering_variation: '📌 Có biến phụ!',
+            train_entering_variation_n: '📌 Biến phụ {0}/{1}',
+            train_exiting_variation: '↩ Quay lại biến chính',
+            train_bad_variation: '❌ Đây là nước sai lầm!',
+            train_good_variation: '✅ Đây là nước cũng hay!',
+            train_return_mainline: '↩ Quay lại tìm nước hay hơn',
 
             // Session end
             end_title: 'Kết thúc Session?',
@@ -198,6 +205,13 @@ const i18n = {
             train_ppm: 'PPM',
             train_end_session: '⏹ End Session',
             train_flip: 'Flip board',
+            train_your_turn_variation: '📌 Side line — Your turn!',
+            train_entering_variation: '📌 Side line!',
+            train_entering_variation_n: '📌 Side line {0}/{1}',
+            train_exiting_variation: '↩ Back to main line',
+            train_bad_variation: '❌ This is a mistake!',
+            train_good_variation: '✅ This is also a good move!',
+            train_return_mainline: '↩ Go back and find the best move',
 
             // Session end
             end_title: 'End Session?',

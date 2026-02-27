@@ -19,6 +19,11 @@ class WoodpeckerTrainer {
         this.isActive = false;
         this.isPaused = false;
 
+        // Variation support
+        this.moveStack = [];           // Stack of saved contexts for variation traversal
+        this._variationsDone = false;  // Flag: variations for current move already explored
+        this.isInVariation = false;    // Are we currently inside a variation?
+
         // Session
         this.sessionAttempts = [];
         this.sessionStartTime = 0;
@@ -36,7 +41,7 @@ class WoodpeckerTrainer {
 
         // Setup board callback
         this.board.onMove = (from, to, promotion) => {
-            if (this.isActive && !this.isPaused) {
+            if (this.isActive && !this.isPaused && !this._isAutoPlaying) {
                 this._handlePlayerMove(from, to, promotion);
             }
         };
@@ -98,6 +103,13 @@ class WoodpeckerTrainer {
 
         this.moveIndex = 0;
         this.isActive = true;
+
+        // Reset variation state
+        this.moveStack = [];
+        this._variationsDone = false;
+        this.isInVariation = false;
+        this._playerVariationRestore = null;
+        this._isAutoPlaying = false;
 
         // Sync player color to the board so it knows which pieces can be dragged
         this.board.playerColor = this.playerColor;
@@ -225,12 +237,31 @@ class WoodpeckerTrainer {
      */
     _processNextMove() {
         if (this.moveIndex >= this.currentMoves.length) {
-            // Puzzle completed
-            this._completePuzzle();
+            if (this.moveStack.length > 0) {
+                // Finished a variation — exit back
+                this._exitVariation();
+            } else {
+                // All done — puzzle complete
+                this._completePuzzle();
+            }
             return;
         }
 
         const moveNode = this.currentMoves[this.moveIndex];
+
+        // Auto-explore variations only on OPPONENT moves
+        // Player-side variations are handled in _handlePlayerMove when the player chooses one
+        if (moveNode.variations && moveNode.variations.length > 0 && !this._variationsDone) {
+            if (!this._isPlayerTurn(moveNode)) {
+                this._variationsDone = true;
+                this._startVariationExploration(moveNode);
+                return;
+            }
+        }
+
+        // Reset flag for next move
+        this._variationsDone = false;
+
         const isPlayerTurn = this._isPlayerTurn(moveNode);
 
         if (!isPlayerTurn) {
@@ -244,8 +275,142 @@ class WoodpeckerTrainer {
             // Player's turn - wait for input
             this.board.interactive = true;
             if (this.onStatusChange) {
-                this.onStatusChange({ status: 'your_turn', moveIndex: this.moveIndex });
+                this.onStatusChange({
+                    status: 'your_turn',
+                    moveIndex: this.moveIndex,
+                    isVariation: this.isInVariation
+                });
             }
+        }
+    }
+
+    /**
+     * Begin exploring variations for a move before executing it
+     * Saves current context, enters the first variation
+     */
+    _startVariationExploration(moveNode) {
+        const savedFen = this.chess.fen();
+        const pendingVariations = [...moveNode.variations];
+        const firstVariation = pendingVariations.shift();
+
+        // Push mainline context onto stack
+        this.moveStack.push({
+            moves: this.currentMoves,
+            moveIndex: this.moveIndex,
+            chessFen: savedFen,
+            pendingVariations,
+            variationsDone: true
+        });
+
+        // Enter the first variation
+        this.currentMoves = firstVariation;
+        this.moveIndex = 0;
+        this.isInVariation = true;
+
+        // Restore position to before the branching move
+        this.chess.load(savedFen);
+        this.board.clearLastMove();
+        this.board.setPosition(this.chess);
+
+        if (this.onStatusChange) {
+            this.onStatusChange({
+                status: 'entering_variation',
+                totalVariations: moveNode.variations.length,
+                variationNumber: 1
+            });
+        }
+
+        // Process first move of variation after a short delay
+        setTimeout(() => this._processNextMove(), 800);
+    }
+
+    /**
+     * Exit the current variation and either enter the next one or return to mainline
+     */
+    _exitVariation() {
+        if (this.moveStack.length === 0) {
+            this._completePuzzle();
+            return;
+        }
+
+        const saved = this.moveStack.pop();
+
+        // Check if there are more pending variations at this level
+        if (saved.pendingVariations.length > 0) {
+            const nextVariation = saved.pendingVariations.shift();
+            const totalVariations = saved.moves[saved.moveIndex].variations.length;
+            const variationNumber = totalVariations - saved.pendingVariations.length;
+
+            // Push context back for remaining variations
+            this.moveStack.push({
+                moves: saved.moves,
+                moveIndex: saved.moveIndex,
+                chessFen: saved.chessFen,
+                pendingVariations: saved.pendingVariations,
+                variationsDone: true
+            });
+
+            // Enter next variation from the same branch point
+            this.currentMoves = nextVariation;
+            this.moveIndex = 0;
+            this.isInVariation = true;
+
+            this.chess.load(saved.chessFen);
+            this.board.clearLastMove();
+            this.board.setPosition(this.chess);
+
+            if (this.onStatusChange) {
+                this.onStatusChange({
+                    status: 'entering_variation',
+                    totalVariations,
+                    variationNumber
+                });
+            }
+
+            setTimeout(() => this._processNextMove(), 800);
+        } else if (saved.playerVariation) {
+            // Returning from a player-initiated good variation
+            this.currentMoves = saved.moves;
+            this.moveIndex = saved.moveIndex;
+            this._variationsDone = false;
+            this.isInVariation = this.moveStack.length > 0;
+
+            this.chess.load(saved.chessFen);
+            this.board.clearLastMove();
+            this.board.setPosition(this.chess);
+
+            if (this.onStatusChange) {
+                this.onStatusChange({ status: 'return_to_mainline' });
+            }
+
+            // After delay, wait for player to find the mainline move
+            setTimeout(() => {
+                this.board.interactive = true;
+                if (this.onStatusChange) {
+                    this.onStatusChange({
+                        status: 'your_turn',
+                        moveIndex: this.moveIndex,
+                        isVariation: this.isInVariation
+                    });
+                }
+            }, 2000);
+        } else {
+            // All opponent variations done at this level — restore mainline
+            this.currentMoves = saved.moves;
+            this.moveIndex = saved.moveIndex;
+            this._variationsDone = saved.variationsDone;
+            this.isInVariation = this.moveStack.length > 0;
+
+            this.chess.load(saved.chessFen);
+            this.board.clearLastMove();
+            this.board.setPosition(this.chess);
+
+            if (this.onStatusChange) {
+                this.onStatusChange({ status: 'exiting_variation' });
+            }
+
+            // Continue with the mainline move (now with variations marked done)
+            setTimeout(() => this._processNextMove(), 1000);
         }
     }
 
@@ -283,6 +448,9 @@ class WoodpeckerTrainer {
 
         const expectedMove = this.currentMoves[this.moveIndex];
 
+        // Save FEN before making the move (needed for variation restoration)
+        const fenBeforeMove = this.chess.fen();
+
         // Try to make the move
         const attemptResult = this.chess.move({
             from, to,
@@ -291,7 +459,7 @@ class WoodpeckerTrainer {
 
         if (!attemptResult) return; // Invalid move
 
-        // Check if it matches expected
+        // Check if it matches expected mainline move
         const normalizedAttempt = this._normalizeSan(attemptResult.san);
         const normalizedExpected = this._normalizeSan(expectedMove.san);
 
@@ -321,21 +489,176 @@ class WoodpeckerTrainer {
             // Small delay then process next
             setTimeout(() => this._processNextMove(), 300);
         } else {
-            // Wrong move - undo it
-            this.chess.undo();
-            this.board.setPosition(this.chess);
+            // Not the mainline move — check if it matches a player-side variation
+            const matchedVar = this._findMatchingPlayerVariation(expectedMove, normalizedAttempt);
+
+            if (matchedVar) {
+                // Player chose a variation move — keep the move on the board
+                this.board.setPosition(this.chess, true);
+                this.board.showLastMove(from, to);
+
+                if (typeof soundManager !== 'undefined') {
+                    attemptResult.captured ? soundManager.playCapture() : soundManager.playMove();
+                }
+
+                this._handlePlayerVariation(matchedVar, fenBeforeMove);
+            } else {
+                // Wrong move — not mainline and not in any variation
+                this.chess.undo();
+                this.board.setPosition(this.chess);
+                this.mistakes++;
+
+                if (typeof soundManager !== 'undefined') {
+                    soundManager.playIncorrect();
+                }
+
+                this._showFeedback('incorrect');
+
+                if (this.onStatusChange) {
+                    this.onStatusChange({ status: 'incorrect', mistakes: this.mistakes });
+                }
+            }
+        }
+    }
+
+    /**
+     * Check if a player's move matches any variation of the expected move
+     * Returns { variation, isBad, firstMove } or null
+     */
+    _findMatchingPlayerVariation(expectedMove, normalizedAttempt) {
+        if (!expectedMove.variations || expectedMove.variations.length === 0) return null;
+
+        for (const variation of expectedMove.variations) {
+            if (variation.length === 0) continue;
+            const firstMove = variation[0];
+            if (this._normalizeSan(firstMove.san) === normalizedAttempt) {
+                // Check if it's a bad move: NAG 2 (?) or NAG 4 (??)
+                const isBad = firstMove.nags.includes(2) || firstMove.nags.includes(4);
+                return { variation, isBad, firstMove };
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Handle a player-initiated variation
+     * @param {Object} matchedVar - { variation, isBad, firstMove }
+     * @param {string} fenBeforeMove - FEN before the player's move
+     */
+    _handlePlayerVariation(matchedVar, fenBeforeMove) {
+        const { variation, isBad } = matchedVar;
+        this.board.interactive = false;
+
+        if (isBad) {
+            // BAD variation: mistakes++, auto-play everything, then restore
             this.mistakes++;
 
-            // Play incorrect sound
             if (typeof soundManager !== 'undefined') {
                 soundManager.playIncorrect();
             }
 
-            this._showFeedback('incorrect');
-
             if (this.onStatusChange) {
-                this.onStatusChange({ status: 'incorrect', mistakes: this.mistakes });
+                this.onStatusChange({ status: 'player_bad_variation' });
             }
+
+            // Save state for restoration after auto-play
+            this._playerVariationRestore = {
+                chessFen: fenBeforeMove,
+                moves: this.currentMoves,
+                moveIndex: this.moveIndex
+            };
+
+            // Auto-play remaining moves of the bad variation (start from index 1, player already played 0)
+            this._autoPlayBadVariation(variation, 1);
+        } else {
+            // GOOD variation: interactive play, then restore
+            if (this.onStatusChange) {
+                this.onStatusChange({ status: 'player_good_variation' });
+            }
+
+            // Push current mainline state onto stack
+            this.moveStack.push({
+                moves: this.currentMoves,
+                moveIndex: this.moveIndex,
+                chessFen: fenBeforeMove,
+                pendingVariations: [],
+                variationsDone: false,
+                playerVariation: true
+            });
+
+            // Enter variation from index 1 (player already played move 0)
+            this.currentMoves = variation;
+            this.moveIndex = 1;
+            this.isInVariation = true;
+
+            // Process next move in variation after a delay
+            setTimeout(() => this._processNextMove(), 800);
+        }
+    }
+
+    /**
+     * Auto-play all remaining moves of a bad variation at slow speed (2s/move)
+     * Player watches the consequences of their bad move
+     */
+    _autoPlayBadVariation(variationMoves, index) {
+        // Guard: stop if session ended during auto-play
+        if (!this.isActive) {
+            this._isAutoPlaying = false;
+            return;
+        }
+
+        if (index >= variationMoves.length) {
+            // Variation complete — show "find a better move" message
+            this._isAutoPlaying = false;
+            if (this.onStatusChange) {
+                this.onStatusChange({ status: 'return_to_mainline' });
+            }
+
+            // Restore position after delay
+            setTimeout(() => this._restoreFromPlayerVariation(), 2000);
+            return;
+        }
+
+        this._isAutoPlaying = true;
+        setTimeout(() => {
+            if (!this.isActive) {
+                this._isAutoPlaying = false;
+                return;
+            }
+            const moveNode = variationMoves[index];
+            this._executeMove(moveNode);
+            this._autoPlayBadVariation(variationMoves, index + 1);
+        }, 2000);
+    }
+
+    /**
+     * Restore position after a player-initiated variation (bad or good)
+     * Returns to the position before the player's variation move
+     */
+    _restoreFromPlayerVariation() {
+        const saved = this._playerVariationRestore;
+        if (!saved || !this.isActive) {
+            this._playerVariationRestore = null;
+            return;
+        }
+        this._playerVariationRestore = null;
+
+        this.currentMoves = saved.moves;
+        this.moveIndex = saved.moveIndex;
+        this.isInVariation = this.moveStack.length > 0;
+
+        this.chess.load(saved.chessFen);
+        this.board.clearLastMove();
+        this.board.setPosition(this.chess);
+
+        // Wait for player to find the mainline move
+        this.board.interactive = true;
+        if (this.onStatusChange) {
+            this.onStatusChange({
+                status: 'your_turn',
+                moveIndex: this.moveIndex,
+                isVariation: this.isInVariation
+            });
         }
     }
 
@@ -413,6 +736,11 @@ class WoodpeckerTrainer {
         this.moveIndex = 0;
         this.mistakes = 0;
         this.sessionAttempts = [];
+        this.moveStack = [];
+        this._variationsDone = false;
+        this.isInVariation = false;
+        this._playerVariationRestore = null;
+        this._isAutoPlaying = false;
 
         if (this.timerInterval) {
             clearInterval(this.timerInterval);

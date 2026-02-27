@@ -955,6 +955,16 @@ textarea.wp-input {
     color: var(--accent);
 }
 
+.wp-training-status.variation {
+    color: #f0a030;
+    font-weight: 600;
+}
+
+.wp-training-status.variation-exit {
+    color: #2ecc71;
+    font-weight: 600;
+}
+
 /* Move List */
 .wp-move-list {
     background: var(--bg-surface);
