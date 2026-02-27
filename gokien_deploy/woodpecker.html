@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="TriTueTre Chess Training - Luyện tập cờ vua theo phương pháp Woodpecker">
+    <title>♞ TriTueTre Chess Training</title>
+    <link rel="stylesheet" href="css/woodpecker.css">
+</head>
+
+<body>
+    <div class="wp-app">
+        <!-- Header -->
+        <header class="wp-header">
+            <a class="wp-logo" onclick="wpApp._showDashboard()">
+                <div class="wp-logo-icon">♞</div>
+                <div class="wp-logo-text">TriTueTre<span>Chess</span></div>
+            </a>
+            <div class="wp-header-right" id="wp-header-right"></div>
+        </header>
+
+        <!-- ========== LOGIN VIEW ========== -->
+        <div id="view-login" class="wp-view">
+            <div class="wp-login-container">
+                <div class="wp-login-card">
+                    <div class="wp-login-logo">
+                        <div class="logo-icon">♞</div>
+                    </div>
+                    <h1>Đăng nhập</h1>
+                    <p class="login-subtitle">TriTueTre Chess Training</p>
+
+                    <div class="wp-form-group">
+                        <label>Username</label>
+                        <input class="wp-input" id="login-username" type="text" placeholder="Nhập username"
+                            onkeydown="if(event.key==='Enter')wpApp.login()">
+                    </div>
+                    <div class="wp-form-group">
+                        <label>Password</label>
+                        <input class="wp-input" id="login-password" type="password" placeholder="Nhập password"
+                            onkeydown="if(event.key==='Enter')wpApp.login()">
+                    </div>
+                    <div id="login-error"
+                        style="color:var(--danger);font-size:0.85rem;margin-bottom:12px;text-align:center;"></div>
+                    <button class="wp-btn wp-btn-primary wp-btn-lg wp-btn-block" id="login-btn" onclick="wpApp.login()">
+                        Đăng nhập
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== DASHBOARD VIEW ========== -->
+        <div id="view-dashboard" class="wp-view">
+            <h1 class="wp-section-title">🧩 Bộ Puzzle của bạn</h1>
+            <p class="wp-section-subtitle">Chọn một bộ puzzle để bắt đầu luyện tập theo phương pháp Woodpecker</p>
+            <div id="wp-sets-grid" class="wp-puzzle-sets-grid"></div>
+        </div>
+
+        <!-- ========== SET DETAIL VIEW ========== -->
+        <div id="view-set-detail" class="wp-view">
+            <div id="wp-set-detail-content"></div>
+        </div>
+
+        <!-- ========== TRAINING VIEW ========== -->
+        <div id="view-training" class="wp-view">
+            <div class="wp-training-layout">
+                <div class="wp-board-section">
+                    <div class="wp-board-container">
+                        <div id="wp-chessboard"></div>
+                    </div>
+                    <div class="wp-board-controls">
+                        <button class="wp-btn-icon" onclick="wpApp.board && wpApp.board.flip()"
+                            title="Xoay bàn cờ">🔄</button>
+                    </div>
+                </div>
+
+                <div class="wp-training-panel">
+                    <div class="wp-training-top-bar">
+                        <div class="wp-training-info">
+                            <div class="puzzle-title" id="wp-training-set-name">Puzzle Set</div>
+                            <div class="puzzle-counter" id="wp-puzzle-counter">Puzzle 0/0</div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <span id="wp-training-cycle-badge"
+                                style="background:var(--accent-light);color:var(--accent);padding:4px 12px;border-radius:20px;font-size:0.8rem;font-weight:600;">Cycle
+                                1</span>
+                            <div class="wp-timer" id="wp-timer">
+                                <span class="timer-icon">⏱</span>
+                                <span class="timer-value" id="wp-timer-value">10:00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="wp-training-content">
+                        <div class="wp-training-progress">
+                            <div class="wp-training-progress-bar">
+                                <div class="wp-training-progress-fill" id="wp-progress-fill" style="width:0%"></div>
+                            </div>
+                            <span class="wp-training-progress-text" id="wp-progress-text">0/0</span>
+                        </div>
+
+                        <div class="wp-training-status thinking" id="wp-training-status">
+                            Sẵn sàng
+                        </div>
+
+                        <div class="wp-session-quick-stats" id="wp-session-quick-stats">
+                            <div class="quick-stat">
+                                <div class="quick-stat-value">0/0</div>
+                                <div class="quick-stat-label">Solved</div>
+                            </div>
+                            <div class="quick-stat">
+                                <div class="quick-stat-value">0.0%</div>
+                                <div class="quick-stat-label">Accuracy</div>
+                            </div>
+                            <div class="quick-stat">
+                                <div class="quick-stat-value">0.00</div>
+                                <div class="quick-stat-label">PPM</div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top:auto;padding-top:16px;">
+                            <button class="wp-btn wp-btn-danger wp-btn-block" onclick="wpApp.endSessionManual()">
+                                ⏹ Kết thúc Session
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== ADMIN VIEW ========== -->
+        <div id="view-admin" class="wp-view">
+            <div class="wp-breadcrumb">
+                <a onclick="wpApp._showDashboard()">Dashboard</a>
+                <span class="sep">›</span>
+                <span class="current">Admin</span>
+            </div>
+
+            <h1 class="wp-section-title">⚙ Quản trị</h1>
+
+            <!-- Users -->
+            <div class="wp-admin-section">
+                <div class="wp-admin-section-header">
+                    <h2>👥 Quản lý Users</h2>
+                    <button class="wp-btn wp-btn-primary wp-btn-sm" onclick="wpApp.showCreateUserForm()">+ Tạo
+                        User</button>
+                </div>
+                <div class="wp-admin-list" id="wp-admin-users-list">
+                    <div class="wp-loading"><span class="wp-spinner"></span> Đang tải...</div>
+                </div>
+            </div>
+
+            <!-- Puzzle Sets -->
+            <div class="wp-admin-section">
+                <div class="wp-admin-section-header">
+                    <h2>🧩 Quản lý Puzzle Sets</h2>
+                    <button class="wp-btn wp-btn-primary wp-btn-sm" onclick="wpApp.showCreatePuzzleSetForm()">+ Tạo
+                        Puzzle Set</button>
+                </div>
+                <div class="wp-admin-list" id="wp-admin-sets-list">
+                    <div class="wp-loading"><span class="wp-spinner"></span> Đang tải...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== MODAL ========== -->
+    <div class="wp-modal-overlay" id="wp-modal-overlay" onclick="if(event.target===this)wpApp.closeModal()">
+        <div class="wp-modal">
+            <div class="wp-modal-header">
+                <h3 id="wp-modal-title"></h3>
+                <button class="wp-btn wp-btn-ghost wp-btn-sm" onclick="wpApp.closeModal()">✕</button>
+            </div>
+            <div class="wp-modal-body" id="wp-modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Hint Flash -->
+    <div class="wp-hint-flash" id="wp-hint-flash"></div>
+
+    <!-- Toast Container -->
+    <div class="wp-toast-container" id="wp-toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="js/pgn-parser.js"></script>
+    <script src="js/i18n.js"></script>
+    <script src="js/chessboard.js"></script>
+    <script src="js/sound-manager.js"></script>
+    <script src="js/woodpecker-trainer.js"></script>
+    <script src="js/woodpecker-app.js"></script>
+</body>
+
+</html>

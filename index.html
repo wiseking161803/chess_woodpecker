@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Chess Opening Trainer - Học khai cuộc cờ vua với phương pháp lặp lại ngắt quãng">
+    <title>Chess Opening Trainer</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body>
+    <div class="app" id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <a class="app-logo" onclick="app.navigate('courses')">
+                <div class="app-logo-icon">♞</div>
+                <div class="app-logo-text">Chess<span>Trainer</span></div>
+            </a>
+            <div class="header-actions">
+                <button class="btn-icon" id="btn-admin-toggle" onclick="app.toggleAdmin()" title="Quản trị">⚙</button>
+            </div>
+        </header>
+
+        <!-- ========== COURSE LIST VIEW ========== -->
+        <div id="view-courses" class="view active">
+            <h1 class="section-title">Khóa học của bạn</h1>
+            <p class="section-subtitle">Chọn một khóa học để bắt đầu hoặc tiếp tục học khai cuộc</p>
+            <div id="course-grid" class="course-grid"></div>
+        </div>
+
+        <!-- ========== COURSE DETAIL VIEW (chapter list) ========== -->
+        <div id="view-course-detail" class="view">
+            <div class="breadcrumb">
+                <a onclick="app.navigate('courses')">Khóa học</a>
+                <span class="separator">›</span>
+                <span class="current" id="detail-breadcrumb-name"></span>
+            </div>
+
+            <div class="course-detail-header">
+                <div class="course-detail-info">
+                    <h1 class="section-title" id="detail-course-name"></h1>
+                    <p class="section-subtitle" id="detail-course-desc"></p>
+                </div>
+            </div>
+
+            <div id="course-chapter-list" class="chapter-list"></div>
+        </div>
+
+        <!-- ========== CHAPTER DETAIL VIEW (Learn/Review/Lines tabs) ========== -->
+        <div id="view-chapter-detail" class="view">
+            <div class="breadcrumb">
+                <a onclick="app.navigate('courses')">Khóa học</a>
+                <span class="separator">›</span>
+                <a onclick="app.backToCourseDetail()" id="chapterdetail-breadcrumb-course"></a>
+                <span class="separator">›</span>
+                <span class="current" id="chapterdetail-breadcrumb-name"></span>
+            </div>
+            <div class="chapter-header">
+                <div>
+                    <h1 class="section-title" id="chapterdetail-name"></h1>
+                    <p class="section-subtitle" id="chapterdetail-desc"></p>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="learn" onclick="app.switchTab('learn')">
+                    📘 Học mới <span class="tab-badge" id="tab-learn-count">0</span>
+                </button>
+                <button class="tab-btn" data-tab="review" onclick="app.switchTab('review')">
+                    🔄 Ôn tập <span class="tab-badge tab-badge-due" id="tab-review-count">0</span>
+                </button>
+                <button class="tab-btn" data-tab="lines" onclick="app.switchTab('lines')">
+                    📋 Tất cả biến <span class="tab-badge" id="tab-lines-count">0</span>
+                </button>
+            </div>
+
+            <!-- Learn Tab -->
+            <div class="tab-content active" id="tab-learn">
+                <div class="tab-panel-empty" id="learn-empty">
+                    <div class="empty-icon">🎉</div>
+                    <div class="empty-text">Bạn đã học hết tất cả các biến trong chương này!</div>
+                </div>
+                <div id="learn-content" style="display:none;">
+                    <div class="learn-info">
+                        <p id="learn-info-text"></p>
+                        <button class="btn btn-primary btn-lg" id="btn-start-learn" onclick="app.startNextLearn()">
+                            ▶ Bắt đầu học
+                        </button>
+                    </div>
+                    <div id="learn-lines-list" class="lines-list"></div>
+                </div>
+            </div>
+
+            <!-- Review Tab -->
+            <div class="tab-content" id="tab-review">
+                <div class="tab-panel-empty" id="review-empty">
+                    <div class="empty-icon">✅</div>
+                    <div class="empty-text">Không có biến nào cần ôn tập ngay!</div>
+                    <div class="empty-subtext">Hãy quay lại sau để ôn tập</div>
+                </div>
+                <div id="review-content" style="display:none;">
+                    <div class="review-info">
+                        <p id="review-info-text"></p>
+                        <button class="btn btn-primary btn-lg" id="btn-start-review" onclick="app.startReviewSession()">
+                            🔄 Bắt đầu ôn tập
+                        </button>
+                    </div>
+                    <div id="review-lines-list" class="lines-list"></div>
+                </div>
+            </div>
+
+            <!-- Lines Tab (all lines) -->
+            <div class="tab-content" id="tab-lines">
+                <div id="all-lines-list" class="lines-list"></div>
+            </div>
+        </div>
+
+        <!-- ========== TRAINING VIEW ========== -->
+        <div id="view-training" class="view">
+            <div class="breadcrumb">
+                <a onclick="app.navigate('courses')">Khóa học</a>
+                <span class="separator">›</span>
+                <a onclick="app.backToCourseDetail()" id="training-breadcrumb-course"></a>
+                <span class="separator">›</span>
+                <a onclick="app.backToChapterDetail()" id="training-breadcrumb-chapter"></a>
+                <span class="separator">›</span>
+                <span class="current" id="training-breadcrumb-line"></span>
+            </div>
+
+            <div class="training-layout">
+                <div class="board-section">
+                    <div class="board-container">
+                        <div id="chessboard"></div>
+                    </div>
+                    <div class="board-controls">
+                        <button class="btn-icon" onclick="app.flipBoard()" title="Xoay bàn cờ">🔄</button>
+                        <button class="btn-icon" onclick="app.goToStart()" title="Về đầu">⏮</button>
+                        <button class="btn-icon" onclick="app.goBack()" title="Lùi">◀</button>
+                        <button class="btn-icon" onclick="app.goForward()" title="Tiến">▶</button>
+                        <button class="btn-icon" onclick="app.goToEnd()" title="Về cuối">⏭</button>
+                    </div>
+                </div>
+
+                <div class="info-panel">
+                    <div class="training-header">
+                        <div style="display:flex; align-items:center; gap:10px; justify-content:space-between;">
+                            <div>
+                                <div class="training-title" id="training-title"></div>
+                                <span class="training-mode-badge" id="training-mode-badge"></span>
+                            </div>
+                            <div style="display:flex;gap:6px;">
+                                <span id="mistake-counter" style="font-size:0.8rem; color:var(--text-muted);"></span>
+                                <span id="queue-counter" style="font-size:0.8rem; color:var(--text-muted);"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="move-list-container">
+                        <div class="move-list-header">Danh sách nước đi</div>
+                        <div class="move-list" id="move-list"></div>
+                    </div>
+
+                    <div class="comment-panel" id="comment-panel">
+                        <div class="comment-panel-header">💬 Bình luận</div>
+                        <div class="comment-content" id="comment-content">
+                            <span class="comment-empty">Chọn một nước đi để xem bình luận</span>
+                        </div>
+                    </div>
+
+                    <div class="status-bar">
+                        <div class="status-message" id="status-message">Sẵn sàng</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== ADMIN VIEW ========== -->
+        <div id="view-admin" class="view">
+            <div class="breadcrumb">
+                <a onclick="app.navigate('courses')">Khóa học</a>
+                <span class="separator">›</span>
+                <span class="current">Quản trị</span>
+            </div>
+
+            <div class="admin-header">
+                <h1 class="section-title">⚙ Quản trị khóa học</h1>
+                <button class="btn btn-primary" onclick="admin.showCourseForm()">+ Tạo khóa học mới</button>
+            </div>
+
+            <div id="admin-course-list" class="admin-list"></div>
+
+            <div id="admin-chapters-section" style="display:none;">
+                <div class="admin-header" style="margin-top:24px;">
+                    <h2 class="section-title" id="admin-chapters-title"></h2>
+                    <button class="btn btn-primary" onclick="admin.showChapterForm()">+ Thêm chương mới</button>
+                </div>
+                <div id="admin-chapter-list" class="admin-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== MODAL ========== -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal" id="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modal-title"></h3>
+                <button class="btn-icon" onclick="app.closeModal()">✕</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Completion Overlay -->
+    <div class="completion-overlay" id="completion-overlay">
+        <div class="completion-card">
+            <div class="completion-icon" id="completion-icon">🎉</div>
+            <div class="completion-title" id="completion-title">Hoàn thành!</div>
+            <div class="completion-text" id="completion-text"></div>
+            <div class="completion-stats" id="completion-stats"></div>
+            <div class="completion-actions">
+                <button class="btn btn-secondary" onclick="app.backToChapterDetail()">Quay lại</button>
+                <button class="btn btn-primary" id="btn-continue-training" onclick="app.continueTraining()">Tiếp
+                    tục</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hint Flash -->
+    <div class="hint-flash" id="hint-flash"></div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="js/pgn-parser.js"></script>
+    <script src="js/chessboard.js"></script>
+    <script src="js/spaced-repetition.js"></script>
+    <script src="js/course-manager.js"></script>
+    <script src="js/trainer.js"></script>
+    <script src="js/admin.js"></script>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
