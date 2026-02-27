@@ -102,7 +102,8 @@ class WoodpeckerTrainer {
         // Sync player color to the board so it knows which pieces can be dragged
         this.board.playerColor = this.playerColor;
 
-        // Set initial position on the board
+        // Set initial position on the board (clear previous highlights first)
+        this.board.clearLastMove();
         this.board.setPosition(this.chess);
 
         // Orient board so player's pieces are at the bottom

@@ -305,6 +305,14 @@ class ChessBoard {
     }
 
     /**
+     * Clear last move highlights
+     */
+    clearLastMove() {
+        this.lastMove = null;
+        this.highlightLayer.querySelectorAll('.last-move-hl').forEach(el => el.remove());
+    }
+
+    /**
      * Show legal move indicators
      */
     _showLegalMoves(square) {

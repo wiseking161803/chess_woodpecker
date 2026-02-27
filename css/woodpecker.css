@@ -806,6 +806,7 @@ textarea.wp-input {
     align-items: center;
     gap: 12px;
     position: relative;
+    overflow: visible;
 }
 
 .wp-board-container {
@@ -1601,11 +1602,8 @@ textarea.wp-input {
 
     /* === HINT OVERLAY === */
     .wp-hint-flash {
-        position: fixed;
-        top: auto;
-        bottom: 100px;
-        left: 50%;
-        transform: translateX(-50%);
+        font-size: 0.85rem;
+        padding: 8px 18px;
     }
 }
 
@@ -1813,9 +1811,9 @@ textarea.wp-input {
 
 /* ===== HINT OVERLAY ===== */
 .wp-hint-flash {
-    position: fixed;
+    position: absolute;
     top: 50%;
-    left: 280px;
+    left: 50%;
     transform: translate(-50%, -50%);
     padding: 10px 24px;
     border-radius: var(--radius-md);
@@ -1825,6 +1823,7 @@ textarea.wp-input {
     z-index: 500;
     opacity: 0;
     transition: opacity 0.2s ease;
+    white-space: nowrap;
 }
 
 .wp-hint-flash.correct {
