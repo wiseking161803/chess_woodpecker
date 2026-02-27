@@ -291,13 +291,29 @@ app.get('/api/admin/users/:id/stats', authMiddleware, adminMiddleware, async (re
         const setsProgress = [];
         for (const s of sets) {
             const { rows: cycles } = await pool.query(
-                'SELECT cycle_number, completed_at FROM cycles WHERE set_id = $1 ORDER BY cycle_number', [s.id]
+                'SELECT id, cycle_number, completed_at FROM cycles WHERE set_id = $1 ORDER BY cycle_number', [s.id]
             );
             const completedCycles = cycles.filter(c => c.completed_at).length;
             const currentCycle = cycles.length > 0 ? cycles[cycles.length - 1].cycle_number : 0;
+
+            // Count unique correct puzzles across all sessions in the current (latest) cycle
+            let puzzlesSolved = 0;
+            if (cycles.length > 0) {
+                const latestCycleId = cycles[cycles.length - 1].id;
+                const { rows: solvedRows } = await pool.query(
+                    `SELECT COUNT(DISTINCT a.puzzle_index) AS solved
+                     FROM attempts a
+                     JOIN training_sessions ts ON a.session_id = ts.id
+                     WHERE ts.cycle_id = $1 AND a.correct = true`,
+                    [latestCycleId]
+                );
+                puzzlesSolved = parseInt(solvedRows[0].solved) || 0;
+            }
+
             setsProgress.push({
                 name: s.name, puzzleCount: s.puzzle_count,
-                completedCycles, currentCycle, totalCycles: cycles.length
+                completedCycles, currentCycle, totalCycles: cycles.length,
+                puzzlesSolved
             });
         }
 
@@ -316,6 +332,8 @@ app.get('/api/admin/users/:id/stats', authMiddleware, adminMiddleware, async (re
         const ss = sessionStats[0];
         const totalAttempted = parseInt(ss.total_attempted) || 0;
         const totalSolved = parseInt(ss.total_solved) || 0;
+        const totalTimeMinutes = Math.round((parseInt(ss.total_time) || 0) / 60);
+        const ppm = totalTimeMinutes > 0 ? (totalSolved / totalTimeMinutes).toFixed(2) : '0.00';
 
         res.json({
             user: {
@@ -331,7 +349,8 @@ app.get('/api/admin/users/:id/stats', authMiddleware, adminMiddleware, async (re
                 totalSessions: parseInt(ss.total_sessions) || 0,
                 totalAttempted, totalSolved,
                 accuracy: totalAttempted > 0 ? (totalSolved / totalAttempted * 100).toFixed(1) : '0.0',
-                totalTimeMinutes: Math.round((parseInt(ss.total_time) || 0) / 60)
+                totalTimeMinutes,
+                ppm
             }
         });
     } catch (err) {
@@ -978,9 +997,9 @@ app.get('/api/woodpecker/streak', authMiddleware, async (req, res) => {
     }
 });
 
-// Beacon endpoint for saving session on page unload
+// Beacon endpoint for saving session on page unload (F5 / close tab / logout)
 app.post('/api/woodpecker/sessions/:sessionId/end', async (req, res) => {
-    const { setId, duration } = req.body;
+    const { setId, duration, token } = req.body;
     if (!setId) return res.status(400).json({ error: 'Missing setId' });
 
     try {
@@ -990,10 +1009,42 @@ app.post('/api/woodpecker/sessions/:sessionId/end', async (req, res) => {
         if (rows.length === 0) return res.status(404).json({ error: 'Session not found' });
 
         if (!rows[0].ended_at) {
-            await pool.query(
-                'UPDATE training_sessions SET ended_at = NOW(), duration = $1 WHERE id = $2',
-                [duration || 0, req.params.sessionId]
+            // Recalculate puzzles_attempted/puzzles_solved from actual attempts
+            // (cached counts may be stale if F5 happened mid-puzzle)
+            const { rows: counts } = await pool.query(
+                `SELECT 
+                    COUNT(*) AS attempted,
+                    COUNT(CASE WHEN correct = true THEN 1 END) AS solved
+                 FROM attempts WHERE session_id = $1`,
+                [req.params.sessionId]
             );
+
+            await pool.query(
+                `UPDATE training_sessions 
+                 SET ended_at = NOW(), duration = $1, puzzles_attempted = $2, puzzles_solved = $3 
+                 WHERE id = $4`,
+                [duration || 0, parseInt(counts[0].attempted), parseInt(counts[0].solved), req.params.sessionId]
+            );
+
+            // Record daily completion if session was long enough (>= 570s ≈ 9.5 min)
+            if (token && duration >= 570) {
+                try {
+                    const { rows: sessionRows } = await pool.query(
+                        'SELECT user_id FROM sessions WHERE token = $1', [token]
+                    );
+                    if (sessionRows.length > 0) {
+                        const dcId = generateId();
+                        await pool.query(
+                            `INSERT INTO daily_completions (id, user_id, completed_date)
+                             VALUES ($1, $2, CURRENT_DATE)
+                             ON CONFLICT (user_id, completed_date) DO NOTHING`,
+                            [dcId, sessionRows[0].user_id]
+                        );
+                    }
+                } catch (e) {
+                    console.warn('Beacon daily completion failed:', e.message);
+                }
+            }
         }
         res.json({ ok: true });
     } catch (err) {

@@ -262,6 +262,21 @@ class WoodpeckerApp {
     }
 
     async logout() {
+        // End any active training session before logging out
+        if (this.trainer && this.trainer.isActive && this.currentSessionId) {
+            const duration = this.trainer.getElapsedTime();
+            const payload = JSON.stringify({
+                setId: this.currentSetId,
+                duration: Math.min(duration, this.trainer.SESSION_DURATION),
+                token: this.token
+            });
+            navigator.sendBeacon(
+                `/api/woodpecker/sessions/${this.currentSessionId}/end`,
+                new Blob([payload], { type: 'application/json' })
+            );
+            this.trainer.reset();
+            this.currentSessionId = null;
+        }
         try { await this._api('/api/auth/logout', { method: 'POST' }); } catch { }
         this.token = null;
         this.user = null;
@@ -1064,11 +1079,12 @@ class WoodpeckerApp {
     _setupBeforeUnload() {
         window.addEventListener('beforeunload', () => {
             if (this.trainer && this.trainer.isActive && this.currentSessionId) {
-                const duration = Math.floor((Date.now() - this.trainer.sessionStartTime) / 1000);
+                const duration = this.trainer.getElapsedTime();
                 // Use sendBeacon for reliable delivery during unload
                 const payload = JSON.stringify({
                     setId: this.currentSetId,
-                    duration: Math.min(duration, this.trainer.SESSION_DURATION)
+                    duration: Math.min(duration, this.trainer.SESSION_DURATION),
+                    token: this.token
                 });
                 navigator.sendBeacon(
                     `/api/woodpecker/sessions/${this.currentSessionId}/end`,
@@ -1281,68 +1297,183 @@ class WoodpeckerApp {
     async viewUserStats(userId) {
         try {
             const data = await this._api(`/api/admin/users/${userId}/stats`);
-            const { user, streak, puzzleSets, stats } = data;
+            const html = this._buildUserStatsHtml(data);
+            this._openModal(`📊 ${data.user.fullName || data.user.username}`, html);
+        } catch (err) {
+            this.showToast('Lỗi: ' + err.message, 'error');
+        }
+    }
 
-            const setsHtml = puzzleSets.length > 0 ? puzzleSets.map(s => `
+    _buildUserStatsHtml(data, forPdf = false) {
+        const { user, streak, puzzleSets, stats } = data;
+
+        const setsHtml = puzzleSets.length > 0 ? puzzleSets.map(s => {
+            const pct = s.puzzleCount > 0 ? (s.puzzlesSolved / s.puzzleCount * 100).toFixed(0) : 0;
+            return `
                 <div style="padding:8px 0;border-bottom:1px solid var(--border);">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <strong>🧩 ${s.name}</strong>
-                        <span style="font-size:0.85em;color:var(--text-secondary);">${s.completedCycles}/7 cycles</span>
+                        <span style="font-size:0.85em;color:var(--text-secondary);">${s.puzzlesSolved}/${s.puzzleCount} bài</span>
                     </div>
                     <div style="margin-top:6px;height:6px;border-radius:3px;background:var(--border);overflow:hidden;">
-                        <div style="height:100%;width:${(s.completedCycles / 7 * 100).toFixed(0)}%;background:var(--primary);border-radius:3px;transition:width 0.3s;"></div>
+                        <div style="height:100%;width:${pct}%;background:var(--primary);border-radius:3px;transition:width 0.3s;"></div>
                     </div>
-                    <div style="font-size:0.75em;color:var(--text-secondary);margin-top:4px;">${s.puzzleCount} puzzles · Cycle hiện tại: ${s.currentCycle || 'Chưa bắt đầu'}</div>
+                    <div style="font-size:0.75em;color:var(--text-secondary);margin-top:4px;">Cycle ${s.currentCycle || 0}/7 · ${s.completedCycles} hoàn thành</div>
                 </div>
-            `).join('') : '<div style="color:var(--text-secondary);font-size:0.9em;">Chưa có bộ puzzle nào</div>';
+            `;
+        }).join('') : '<div style="color:var(--text-secondary);font-size:0.9em;">Chưa có bộ puzzle nào</div>';
 
-            this._openModal(`📊 ${user.fullName || user.username}`, `
+        return `
+            <div style="max-width:400px;" class="wp-user-stats-content">
+                <div style="text-align:center;margin-bottom:16px;">
+                    <div style="font-size:0.85em;color:var(--text-secondary);">@${user.username} · Tham gia: ${new Date(user.createdAt).toLocaleDateString('vi')}</div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
+                    <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(245,158,11,0.1);">
+                        <div style="font-size:1.5rem;">🔥</div>
+                        <div style="font-size:1.2rem;font-weight:700;">${streak.current}</div>
+                        <div style="font-size:0.75rem;color:var(--text-secondary);">Streak</div>
+                    </div>
+                    <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(34,197,94,0.1);">
+                        <div style="font-size:1.5rem;">🏆</div>
+                        <div style="font-size:1.2rem;font-weight:700;">${streak.longest}</div>
+                        <div style="font-size:0.75rem;color:var(--text-secondary);">Dài nhất</div>
+                    </div>
+                    <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(59,130,246,0.1);">
+                        <div style="font-size:1.5rem;">📅</div>
+                        <div style="font-size:1.2rem;font-weight:700;">${streak.totalDays}</div>
+                        <div style="font-size:0.75rem;color:var(--text-secondary);">Tổng ngày</div>
+                    </div>
+                    <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(168,85,247,0.1);">
+                        <div style="font-size:1.5rem;">${streak.completedToday ? '✅' : '⬜'}</div>
+                        <div style="font-size:1.2rem;font-weight:700;">${streak.completedToday ? 'Done' : '-'}</div>
+                        <div style="font-size:0.75rem;color:var(--text-secondary);">Hôm nay</div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom:16px;">
+                    <h3 style="font-size:0.95rem;margin-bottom:8px;">🎯 Thống kê tổng</h3>
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-size:0.85em;">
+                        <div>📝 Sessions: <strong>${stats.totalSessions}</strong></div>
+                        <div>⏱ Thời gian: <strong>${stats.totalTimeMinutes} phút</strong></div>
+                        <div>✅ Đúng: <strong>${stats.totalSolved}/${stats.totalAttempted}</strong></div>
+                        <div>🎯 Chính xác: <strong>${stats.accuracy}%</strong></div>
+                        <div>⚡ PPM: <strong>${stats.ppm}</strong></div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 style="font-size:0.95rem;margin-bottom:8px;">📚 Bộ puzzle</h3>
+                    ${setsHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    // ===== PDF EXPORT =====
+    async showExportPdfForm() {
+        try {
+            const users = await this._api('/api/admin/users');
+            const activeUsers = users.filter(u => u.status !== 'pending' && u.role !== 'admin');
+            if (activeUsers.length === 0) {
+                this.showToast('Không có user nào để xuất', 'info');
+                return;
+            }
+
+            const checkboxes = activeUsers.map(u => `
+                <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">
+                    <input type="checkbox" class="pdf-user-cb" value="${u.id}" checked>
+                    <span>${u.fullName || u.username} <span style="opacity:0.5;font-size:0.85em;">@${u.username}</span></span>
+                </label>
+            `).join('');
+
+            this._openModal('📄 Xuất PDF thống kê', `
                 <div style="max-width:400px;">
-                    <div style="text-align:center;margin-bottom:16px;">
-                        <div style="font-size:0.85em;color:var(--text-secondary);">@${user.username} · Tham gia: ${new Date(user.createdAt).toLocaleDateString('vi')}</div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;">
+                            <input type="checkbox" id="pdf-select-all" checked onchange="document.querySelectorAll('.pdf-user-cb').forEach(c=>c.checked=this.checked)">
+                            Chọn tất cả (${activeUsers.length} users)
+                        </label>
                     </div>
-
-                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
-                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(245,158,11,0.1);">
-                            <div style="font-size:1.5rem;">🔥</div>
-                            <div style="font-size:1.2rem;font-weight:700;">${streak.current}</div>
-                            <div style="font-size:0.75rem;color:var(--text-secondary);">Streak</div>
-                        </div>
-                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(34,197,94,0.1);">
-                            <div style="font-size:1.5rem;">🏆</div>
-                            <div style="font-size:1.2rem;font-weight:700;">${streak.longest}</div>
-                            <div style="font-size:0.75rem;color:var(--text-secondary);">Dài nhất</div>
-                        </div>
-                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(59,130,246,0.1);">
-                            <div style="font-size:1.5rem;">📅</div>
-                            <div style="font-size:1.2rem;font-weight:700;">${streak.totalDays}</div>
-                            <div style="font-size:0.75rem;color:var(--text-secondary);">Tổng ngày</div>
-                        </div>
-                        <div style="text-align:center;padding:12px;border-radius:10px;background:rgba(168,85,247,0.1);">
-                            <div style="font-size:1.5rem;">${streak.completedToday ? '✅' : '⬜'}</div>
-                            <div style="font-size:1.2rem;font-weight:700;">${streak.completedToday ? 'Done' : '-'}</div>
-                            <div style="font-size:0.75rem;color:var(--text-secondary);">Hôm nay</div>
-                        </div>
+                    <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+                        ${checkboxes}
                     </div>
-
-                    <div style="margin-bottom:16px;">
-                        <h3 style="font-size:0.95rem;margin-bottom:8px;">🎯 Thống kê tổng</h3>
-                        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-size:0.85em;">
-                            <div>📝 Sessions: <strong>${stats.totalSessions}</strong></div>
-                            <div>⏱ Thời gian: <strong>${stats.totalTimeMinutes} phút</strong></div>
-                            <div>✅ Đúng: <strong>${stats.totalSolved}/${stats.totalAttempted}</strong></div>
-                            <div>🎯 Accuracy: <strong>${stats.accuracy}%</strong></div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <h3 style="font-size:0.95rem;margin-bottom:8px;">📚 Bộ puzzle</h3>
-                        ${setsHtml}
-                    </div>
+                    <button class="wp-btn wp-btn-primary wp-btn-block" style="margin-top:16px;" onclick="wpApp.exportUserStatsPdf()">
+                        📄 Xuất PDF
+                    </button>
                 </div>
             `);
         } catch (err) {
             this.showToast('Lỗi: ' + err.message, 'error');
+        }
+    }
+
+    async exportUserStatsPdf() {
+        const checked = document.querySelectorAll('.pdf-user-cb:checked');
+        if (checked.length === 0) {
+            this.showToast('Vui lòng chọn ít nhất 1 user', 'info');
+            return;
+        }
+
+        const userIds = Array.from(checked).map(c => c.value);
+        this.showToast(`Đang tải thống kê ${userIds.length} users...`, 'info');
+
+        try {
+            const allStats = await Promise.all(
+                userIds.map(id => this._api(`/api/admin/users/${id}/stats`))
+            );
+
+            const cards = allStats.map(data => {
+                const name = data.user.fullName || data.user.username;
+                return `
+                    <div class="user-card">
+                        <h2 style="margin:0 0 12px;font-size:1.2rem;border-bottom:2px solid #4f46e5;padding-bottom:8px;">
+                            📊 ${name}
+                        </h2>
+                        ${this._buildUserStatsHtml(data, true)}
+                    </div>
+                `;
+            }).join('');
+
+            const today = new Date().toLocaleDateString('vi');
+            const printHtml = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Thống kê học viên - ${today}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a2e; padding: 20px; background: #fff; }
+        .header { text-align: center; margin-bottom: 24px; border-bottom: 2px solid #4f46e5; padding-bottom: 12px; }
+        .header h1 { font-size: 1.4rem; color: #4f46e5; }
+        .header p { font-size: 0.85rem; color: #666; margin-top: 4px; }
+        .user-card { page-break-inside: avoid; margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
+        .wp-user-stats-content { max-width: 100% !important; }
+        :root { --border: #e2e8f0; --text-secondary: #666; --primary: #4f46e5; }
+        @media print {
+            body { padding: 0; }
+            .user-card { break-inside: avoid; border: 1px solid #ccc; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>♞ TriTueTre Chess - Thống kê học viên</h1>
+        <p>Ngày xuất: ${today} · ${allStats.length} học viên</p>
+    </div>
+    ${cards}
+    <script>window.onload = () => window.print();</script>
+</body>
+</html>`;
+
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(printHtml);
+            printWindow.document.close();
+
+            this.closeModal();
+        } catch (err) {
+            this.showToast('Lỗi xuất PDF: ' + err.message, 'error');
         }
     }
 

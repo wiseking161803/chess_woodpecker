@@ -142,18 +142,20 @@ class WoodpeckerTrainer {
     }
 
     /**
-     * Start session timer
-     */
+ * Start session timer
+ */
     startTimer() {
         this.sessionStartTime = Date.now();
         this.remainingSeconds = this.SESSION_DURATION;
+        this._pausedTotal = 0;
+        this._pauseStart = null;
 
         if (this.timerInterval) clearInterval(this.timerInterval);
 
         this.timerInterval = setInterval(() => {
             if (this.isPaused) return;
 
-            const elapsed = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+            const elapsed = Math.floor((Date.now() - this.sessionStartTime - this._pausedTotal) / 1000);
             this.remainingSeconds = Math.max(0, this.SESSION_DURATION - elapsed);
 
             if (this.onTimerUpdate) {
@@ -165,15 +167,24 @@ class WoodpeckerTrainer {
             }
         }, 1000);
     }
-
     /**
-     * Pause/resume timer
-     */
+ * Pause/resume timer
+ */
     togglePause() {
-        this.isPaused = !this.isPaused;
+        if (this.isPaused) {
+            // Resuming — accumulate paused duration
+            if (this._pauseStart) {
+                this._pausedTotal += Date.now() - this._pauseStart;
+                this._pauseStart = null;
+            }
+            this.isPaused = false;
+        } else {
+            // Pausing — record start of pause
+            this._pauseStart = Date.now();
+            this.isPaused = true;
+        }
         return this.isPaused;
     }
-
     /**
      * End session
      */
@@ -212,7 +223,7 @@ class WoodpeckerTrainer {
         }
 
         this.isActive = false;
-        const duration = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+        const duration = this.getElapsedTime();
 
         if (this.onSessionComplete) {
             this.onSessionComplete({
@@ -226,13 +237,13 @@ class WoodpeckerTrainer {
     }
 
     /**
-     * Get elapsed session time in seconds
-     */
+ * Get elapsed session time in seconds (excluding paused time)
+ */
     getElapsedTime() {
         if (!this.sessionStartTime) return 0;
-        return Math.floor((Date.now() - this.sessionStartTime) / 1000);
+        const paused = (this._pausedTotal || 0) + (this._pauseStart ? Date.now() - this._pauseStart : 0);
+        return Math.floor((Date.now() - this.sessionStartTime - paused) / 1000);
     }
-
     /**
      * Process the next move in the sequence
      */
@@ -538,7 +549,7 @@ class WoodpeckerTrainer {
 
     /**
      * Check if a player's move matches any variation of the expected move
-     * Returns { variation, isBad, firstMove } or null
+     * Returns { variation, isBad, firstMove } or null if not available
      */
     _findMatchingPlayerVariation(expectedMove, normalizedAttempt) {
         if (!expectedMove.variations || expectedMove.variations.length === 0) return null;
@@ -758,8 +769,8 @@ class WoodpeckerTrainer {
     }
 
     /**
-     * Reset trainer state
-     */
+ * Reset trainer state
+ */
     reset() {
         this.isActive = false;
         this.isPaused = false;
@@ -774,6 +785,8 @@ class WoodpeckerTrainer {
         this._playerVariationRestore = null;
         this._isAutoPlaying = false;
         this._consecutiveMistakes = 0;
+        this._pausedTotal = 0;
+        this._pauseStart = null;
 
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
@@ -783,7 +796,6 @@ class WoodpeckerTrainer {
         this.chess.reset();
         this.board.setPosition(this.chess);
     }
-
     /**
      * Get session statistics so far
      */

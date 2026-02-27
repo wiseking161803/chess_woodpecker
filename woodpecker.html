@@ -246,8 +246,12 @@
             <div class="wp-admin-section">
                 <div class="wp-admin-section-header">
                     <h2>👥 Quản lý Users</h2>
-                    <button class="wp-btn wp-btn-primary wp-btn-sm" onclick="wpApp.showCreateUserForm()">+ Tạo
-                        User</button>
+                    <div style="display:flex;gap:8px;">
+                        <button class="wp-btn wp-btn-secondary wp-btn-sm" onclick="wpApp.showExportPdfForm()">📄 Xuất
+                            PDF</button>
+                        <button class="wp-btn wp-btn-primary wp-btn-sm" onclick="wpApp.showCreateUserForm()">+ Tạo
+                            User</button>
+                    </div>
                 </div>
                 <div class="wp-admin-list" id="wp-admin-users-list">
                     <div class="wp-loading"><span class="wp-spinner"></span> Đang tải...</div>
