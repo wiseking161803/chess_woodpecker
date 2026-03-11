@@ -1396,6 +1396,38 @@ app.get('/api/external/user-info', async (req, res) => {
     }
 });
 
+app.get('/api/external/users', async (req, res) => {
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey !== EXTERNAL_API_KEY) {
+        return res.status(401).json({ error: 'Invalid API key' });
+    }
+    try {
+        const { rows } = await pool.query(`
+            SELECT u.id, u.username, u.display_name,
+                   COALESCE(SUM(ts.duration), 0) AS total_seconds,
+                   COUNT(ts.id) AS total_sessions
+            FROM users u
+            LEFT JOIN puzzle_sets ps ON ps.assigned_to = u.id
+            LEFT JOIN cycles c ON c.set_id = ps.id
+            LEFT JOIN training_sessions ts ON ts.cycle_id = c.id AND ts.ended_at IS NOT NULL
+            WHERE u.status = 'active'
+            GROUP BY u.id, u.username, u.display_name
+            ORDER BY u.display_name
+        `);
+        res.json({
+            users: rows.map(u => ({
+                username: u.username,
+                display_name: u.display_name,
+                total_study_minutes: Math.round(parseInt(u.total_seconds || 0) / 60),
+                total_sessions: parseInt(u.total_sessions || 0)
+            }))
+        });
+    } catch (err) {
+        console.error('External users error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // ===== START SERVER =====
 async function start() {
     try {
