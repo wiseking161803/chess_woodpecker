@@ -1291,6 +1291,65 @@ app.get('/api/chapters/:id/pgn', async (req, res) => {
     }
 });
 
+// ===== EXTERNAL API (cross-app integration) =====
+const EXTERNAL_API_KEY = process.env.EXTERNAL_API_KEY || 'gokien_chess_2026_secret';
+
+app.get('/api/external/daily-study', async (req, res) => {
+    // API key check
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey !== EXTERNAL_API_KEY) {
+        return res.status(401).json({ error: 'Invalid API key' });
+    }
+
+    const { username, date } = req.query;
+    if (!username) return res.status(400).json({ error: 'Missing username' });
+
+    try {
+        // Find user by username
+        const { rows: users } = await pool.query(
+            'SELECT id FROM users WHERE username = $1 AND status = $2',
+            [username, 'active']
+        );
+        if (users.length === 0) {
+            return res.json({ studied: false, total_seconds: 0, username, error: 'User not found' });
+        }
+        const userId = users[0].id;
+
+        // Calculate target date (default: today in VN timezone, reset at 6:00 AM)
+        let targetDate = date;
+        if (!targetDate) {
+            const now = new Date();
+            const vnDate = new Date(now.getTime() + 7 * 3600000 - 6 * 3600000);
+            targetDate = vnDate.toISOString().slice(0, 10);
+        }
+
+        // Sum all session durations for this user on the target date
+        // Join through cycles → puzzle_sets to find sessions belonging to this user
+        const { rows } = await pool.query(`
+            SELECT COALESCE(SUM(ts.duration), 0) AS total_seconds
+            FROM training_sessions ts
+            JOIN cycles c ON ts.cycle_id = c.id
+            JOIN puzzle_sets ps ON c.set_id = ps.id
+            WHERE ps.assigned_to = $1
+              AND DATE(ts.started_at AT TIME ZONE 'Asia/Ho_Chi_Minh') = $2
+              AND ts.ended_at IS NOT NULL
+        `, [userId, targetDate]);
+
+        const totalSeconds = parseInt(rows[0].total_seconds) || 0;
+        const studied = totalSeconds >= 540; // 9 minutes
+
+        res.json({
+            studied,
+            total_seconds: totalSeconds,
+            total_minutes: Math.round(totalSeconds / 60 * 10) / 10,
+            username
+        });
+    } catch (err) {
+        console.error('External daily-study error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // ===== START SERVER =====
 async function start() {
     try {
