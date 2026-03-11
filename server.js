@@ -1362,7 +1362,7 @@ app.get('/api/external/user-info', async (req, res) => {
 
     try {
         const { rows: users } = await pool.query(
-            'SELECT id, username, display_name, status, created_at FROM users WHERE username = $1',
+            'SELECT id, username, full_name, status, created_at FROM users WHERE username = $1',
             [username]
         );
         if (users.length === 0) {
@@ -1384,7 +1384,7 @@ app.get('/api/external/user-info', async (req, res) => {
         res.json({
             exists: true,
             username: user.username,
-            display_name: user.display_name,
+            display_name: user.full_name || user.username,
             status: user.status,
             total_study_seconds: totalSeconds,
             total_study_minutes: Math.round(totalSeconds / 60),
@@ -1403,7 +1403,7 @@ app.get('/api/external/users', async (req, res) => {
     }
     try {
         const { rows } = await pool.query(`
-            SELECT u.id, u.username, u.display_name,
+            SELECT u.id, u.username, u.full_name,
                    COALESCE(SUM(ts.duration), 0) AS total_seconds,
                    COUNT(ts.id) AS total_sessions
             FROM users u
@@ -1411,13 +1411,13 @@ app.get('/api/external/users', async (req, res) => {
             LEFT JOIN cycles c ON c.set_id = ps.id
             LEFT JOIN training_sessions ts ON ts.cycle_id = c.id AND ts.ended_at IS NOT NULL
             WHERE u.status = 'active'
-            GROUP BY u.id, u.username, u.display_name
-            ORDER BY u.display_name
+            GROUP BY u.id, u.username, u.full_name
+            ORDER BY u.full_name
         `);
         res.json({
             users: rows.map(u => ({
                 username: u.username,
-                display_name: u.display_name,
+                display_name: u.full_name || u.username,
                 total_study_minutes: Math.round(parseInt(u.total_seconds || 0) / 60),
                 total_sessions: parseInt(u.total_sessions || 0)
             }))
