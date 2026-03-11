@@ -1351,6 +1351,51 @@ app.get('/api/external/daily-study', async (req, res) => {
     }
 });
 
+app.get('/api/external/user-info', async (req, res) => {
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey !== EXTERNAL_API_KEY) {
+        return res.status(401).json({ error: 'Invalid API key' });
+    }
+
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ error: 'Missing username' });
+
+    try {
+        const { rows: users } = await pool.query(
+            'SELECT id, username, display_name, status, created_at FROM users WHERE username = $1',
+            [username]
+        );
+        if (users.length === 0) {
+            return res.json({ exists: false, username });
+        }
+        const user = users[0];
+
+        // Get total study time across all sessions
+        const { rows: stats } = await pool.query(`
+            SELECT COALESCE(SUM(ts.duration), 0) AS total_seconds,
+                   COUNT(ts.id) AS total_sessions
+            FROM training_sessions ts
+            JOIN cycles c ON ts.cycle_id = c.id
+            JOIN puzzle_sets ps ON c.set_id = ps.id
+            WHERE ps.assigned_to = $1 AND ts.ended_at IS NOT NULL
+        `, [user.id]);
+
+        const totalSeconds = parseInt(stats[0].total_seconds) || 0;
+        res.json({
+            exists: true,
+            username: user.username,
+            display_name: user.display_name,
+            status: user.status,
+            total_study_seconds: totalSeconds,
+            total_study_minutes: Math.round(totalSeconds / 60),
+            total_sessions: parseInt(stats[0].total_sessions) || 0
+        });
+    } catch (err) {
+        console.error('External user-info error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // ===== START SERVER =====
 async function start() {
     try {
