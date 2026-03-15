@@ -1323,11 +1323,12 @@ app.get('/api/external/daily-study', async (req, res) => {
             targetDate = vnDate.toISOString().slice(0, 10);
         }
 
-        // Sum all session durations for this user on the target date
+        // Sum all session durations + puzzle counts for this user on the target date
         // Join through cycles → puzzle_sets to find sessions belonging to this user
         // Use -6h offset to match 6:00 AM VN reset (same as chess app)
         const { rows } = await pool.query(`
-            SELECT COALESCE(SUM(ts.duration), 0) AS total_seconds
+            SELECT COALESCE(SUM(ts.duration), 0) AS total_seconds,
+                   COALESCE(SUM(ts.puzzles_solved), 0) AS total_puzzles
             FROM training_sessions ts
             JOIN cycles c ON ts.cycle_id = c.id
             JOIN puzzle_sets ps ON c.set_id = ps.id
@@ -1337,12 +1338,16 @@ app.get('/api/external/daily-study', async (req, res) => {
         `, [userId, targetDate]);
 
         const totalSeconds = parseInt(rows[0].total_seconds) || 0;
-        const studied = totalSeconds >= 540; // 9 minutes
+        const totalPuzzles = parseInt(rows[0].total_puzzles) || 0;
+        const totalMinutes = Math.round(totalSeconds / 60 * 10) / 10;
+        // studied = at least 30 minutes AND 50 puzzles solved
+        const studied = totalMinutes >= 30 && totalPuzzles >= 50;
 
         res.json({
             studied,
             total_seconds: totalSeconds,
-            total_minutes: Math.round(totalSeconds / 60 * 10) / 10,
+            total_minutes: totalMinutes,
+            total_puzzles: totalPuzzles,
             username
         });
     } catch (err) {
