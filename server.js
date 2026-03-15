@@ -1315,17 +1315,17 @@ app.get('/api/external/daily-study', async (req, res) => {
         }
         const userId = users[0].id;
 
-        // Calculate target date (default: today in VN timezone, reset at 6:00 AM)
+        // Calculate target date (default: today in VN timezone, reset at 0:00 AM)
         let targetDate = date;
         if (!targetDate) {
             const now = new Date();
-            const vnDate = new Date(now.getTime() + 7 * 3600000 - 6 * 3600000);
+            const vnDate = new Date(now.getTime() + 7 * 3600000);
             targetDate = vnDate.toISOString().slice(0, 10);
         }
 
         // Sum all session durations + puzzle counts for this user on the target date
         // Join through cycles → puzzle_sets to find sessions belonging to this user
-        // Use -6h offset to match 6:00 AM VN reset (same as chess app)
+        // Reset at 0:00 AM VN time (UTC+7)
         const { rows } = await pool.query(`
             SELECT COALESCE(SUM(ts.duration), 0) AS total_seconds,
                    COALESCE(SUM(ts.puzzles_solved), 0) AS total_puzzles
@@ -1333,7 +1333,7 @@ app.get('/api/external/daily-study', async (req, res) => {
             JOIN cycles c ON ts.cycle_id = c.id
             JOIN puzzle_sets ps ON c.set_id = ps.id
             WHERE ps.assigned_to = $1
-              AND DATE((ts.started_at AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '6 hours') = $2
+              AND DATE(ts.started_at AT TIME ZONE 'Asia/Ho_Chi_Minh') = $2
               AND ts.ended_at IS NOT NULL
         `, [userId, targetDate]);
 
