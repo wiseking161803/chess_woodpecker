@@ -359,6 +359,90 @@ app.get('/api/admin/users/:id/stats', authMiddleware, adminMiddleware, async (re
     }
 });
 
+// ===== ADMIN REPORT: Per-Cycle Stats for All Users =====
+app.get('/api/admin/report', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        // Get all active non-admin users
+        const { rows: users } = await pool.query(
+            `SELECT id, username, full_name FROM users WHERE status = 'active' AND role != 'admin' ORDER BY full_name, username`
+        );
+
+        const report = [];
+        for (const user of users) {
+            // Get all puzzle sets for this user
+            const { rows: setRows } = await pool.query(
+                'SELECT id, name, puzzle_count FROM puzzle_sets WHERE assigned_to = $1 ORDER BY created_at', [user.id]
+            );
+
+            const sets = [];
+            for (const s of setRows) {
+                // Get cycles with their sessions & attempts
+                const { rows: cycleRows } = await pool.query(
+                    'SELECT * FROM cycles WHERE set_id = $1 ORDER BY cycle_number', [s.id]
+                );
+
+                let overallTime = 0, overallAttempted = 0, overallSolved = 0;
+                const cycles = [];
+
+                for (const c of cycleRows) {
+                    const { rows: sessStats } = await pool.query(`
+                        SELECT COALESCE(SUM(ts.duration), 0) AS total_time,
+                               COALESCE(SUM(ts.puzzles_attempted), 0) AS attempted,
+                               COALESCE(SUM(ts.puzzles_solved), 0) AS solved
+                        FROM training_sessions ts WHERE ts.cycle_id = $1
+                    `, [c.id]);
+
+                    const st = sessStats[0];
+                    const totalTime = parseInt(st.total_time) || 0;
+                    const attempted = parseInt(st.attempted) || 0;
+                    const solved = parseInt(st.solved) || 0;
+
+                    overallTime += totalTime;
+                    overallAttempted += attempted;
+                    overallSolved += solved;
+
+                    cycles.push({
+                        cycleNumber: c.cycle_number,
+                        targetDays: c.target_days,
+                        startedAt: c.started_at,
+                        completedAt: c.completed_at,
+                        totalTime,
+                        puzzlesAttempted: attempted,
+                        puzzlesSolved: solved,
+                        accuracy: attempted > 0 ? (solved / attempted * 100).toFixed(1) : '0.0',
+                        ppm: totalTime > 0 ? (solved / (totalTime / 60)).toFixed(2) : '0.00'
+                    });
+                }
+
+                sets.push({
+                    setName: s.name,
+                    puzzleCount: s.puzzle_count,
+                    cycles,
+                    overall: {
+                        totalTime: overallTime,
+                        puzzlesAttempted: overallAttempted,
+                        puzzlesSolved: overallSolved,
+                        accuracy: overallAttempted > 0 ? (overallSolved / overallAttempted * 100).toFixed(1) : '0.0',
+                        ppm: overallTime > 0 ? (overallSolved / (overallTime / 60)).toFixed(2) : '0.00'
+                    }
+                });
+            }
+
+            report.push({
+                userId: user.id,
+                username: user.username,
+                fullName: user.full_name || user.username,
+                sets
+            });
+        }
+
+        res.json({ users: report });
+    } catch (err) {
+        console.error('Admin report error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
 // ===== ADMIN PUZZLE SET MANAGEMENT =====
 
 app.get('/api/admin/puzzle-sets', authMiddleware, adminMiddleware, async (req, res) => {

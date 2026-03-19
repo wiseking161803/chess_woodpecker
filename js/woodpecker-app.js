@@ -1467,6 +1467,198 @@ class WoodpeckerApp {
         `;
     }
 
+    // ===== ADMIN REPORT =====
+    async showAdminReport() {
+        if (!this.user || this.user.role !== 'admin') return;
+
+        this._openModal('📊 Báo cáo tổng hợp', `
+            <div style="text-align:center;padding:32px;">
+                <span class="wp-spinner"></span>
+                <div style="margin-top:12px;color:var(--text-secondary);font-size:0.9rem;">Đang tải báo cáo...</div>
+            </div>
+        `);
+
+        try {
+            const data = await this._api('/api/admin/report');
+            this._reportData = data.users;
+            const html = this._buildReportHtml(data.users);
+            document.getElementById('wp-modal-body').innerHTML = html;
+            // Widen modal for report table
+            document.querySelector('.wp-modal')?.classList.add('wp-modal-wide');
+        } catch (err) {
+            document.getElementById('wp-modal-body').innerHTML = `
+                <div class="report-empty">
+                    <div class="empty-icon">❌</div>
+                    <div class="empty-text">Lỗi: ${err.message}</div>
+                </div>
+            `;
+        }
+    }
+
+    _buildReportHtml(users, filterUserId = '') {
+        if (!users || users.length === 0) {
+            return `<div class="report-empty"><div class="empty-icon">📭</div><div class="empty-text">Chưa có dữ liệu</div></div>`;
+        }
+
+        // Filter dropdown
+        const filterOptions = users.map(u =>
+            `<option value="${u.userId}" ${filterUserId === u.userId ? 'selected' : ''}>${u.fullName} (@${u.username})</option>`
+        ).join('');
+
+        const filterHtml = `
+            <div class="admin-report-filter">
+                <label>👤 Lọc theo user:</label>
+                <select id="report-user-filter" onchange="wpApp.filterReport()">
+                    <option value="">— Tất cả (${users.length} users) —</option>
+                    ${filterOptions}
+                </select>
+            </div>
+        `;
+
+        const filteredUsers = filterUserId ? users.filter(u => u.userId === filterUserId) : users;
+
+        const cardsHtml = filteredUsers.map((user, idx) => {
+            // Calculate overall stats across all sets
+            let totalTime = 0, totalAttempted = 0, totalSolved = 0;
+            user.sets.forEach(s => {
+                totalTime += s.overall.totalTime;
+                totalAttempted += s.overall.puzzlesAttempted;
+                totalSolved += s.overall.puzzlesSolved;
+            });
+            const overallAccuracy = totalAttempted > 0 ? (totalSolved / totalAttempted * 100).toFixed(1) : '0.0';
+            const overallPpm = totalTime > 0 ? (totalSolved / (totalTime / 60)).toFixed(2) : '0.00';
+            const initial = (user.fullName || user.username).charAt(0).toUpperCase();
+
+            // Sets with cycle tables
+            const setsHtml = user.sets.length > 0 ? user.sets.map(set => {
+                // Build columns: Metric | C1 | C2 | ... | C7 | Tổng
+                const maxCycle = 7;
+                const cycleMap = {};
+                set.cycles.forEach(c => { cycleMap[c.cycleNumber] = c; });
+
+                // Header
+                let thCycles = '';
+                for (let i = 1; i <= maxCycle; i++) {
+                    thCycles += `<th class="cycle-col">C${i}</th>`;
+                }
+
+                // Rows: Time, Accuracy, PPM
+                const buildRow = (label, icon, getter, cssClass) => {
+                    let cells = '';
+                    for (let i = 1; i <= maxCycle; i++) {
+                        const c = cycleMap[i];
+                        if (c) {
+                            const val = getter(c);
+                            const cls = cssClass ? cssClass(c) : '';
+                            cells += `<td class="stat-cell ${cls}">${val}</td>`;
+                        } else {
+                            cells += `<td class="no-data">—</td>`;
+                        }
+                    }
+                    // Overall column
+                    const overallVal = getter(set.overall, true);
+                    const overallCls = cssClass ? cssClass(set.overall) : '';
+                    cells += `<td class="overall-col stat-cell ${overallCls}">${overallVal}</td>`;
+                    return `<tr><td>${icon} ${label}</td>${cells}</tr>`;
+                };
+
+                const timeRow = buildRow('Thời gian', '⏱', (c) => this._formatReportTime(c.totalTime));
+                const accRow = buildRow('Chính xác', '🎯', (c) => `${c.accuracy}%`, (c) => this._accuracyClass(parseFloat(c.accuracy)));
+                const ppmRow = buildRow('PPM', '⚡', (c) => c.ppm, (c) => this._ppmClass(parseFloat(c.ppm)));
+                const solvedRow = buildRow('Giải/Thử', '✅', (c) => `${c.puzzlesSolved}/${c.puzzlesAttempted}`);
+
+                return `
+                    <div class="report-set-section">
+                        <div class="report-set-name">
+                            🧩 ${set.setName}
+                            <span class="puzzle-count-badge">${set.puzzleCount} bài</span>
+                        </div>
+                        <table class="report-cycle-table">
+                            <thead>
+                                <tr>
+                                    <th>Chỉ số</th>
+                                    ${thCycles}
+                                    <th class="overall-col">Tổng</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${timeRow}
+                                ${solvedRow}
+                                ${accRow}
+                                ${ppmRow}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }).join('') : `<div class="report-set-section"><div style="color:var(--text-muted);font-size:0.85rem;font-style:italic;">Chưa có bộ puzzle nào</div></div>`;
+
+            const isOpen = filteredUsers.length <= 3 || filterUserId;
+
+            return `
+                <div class="report-user-card" id="report-user-${user.userId}">
+                    <div class="report-user-header" onclick="wpApp.toggleReportUser('${user.userId}')">
+                        <div class="report-user-name">
+                            <div class="user-icon">${initial}</div>
+                            ${user.fullName} <span style="opacity:0.7;font-size:0.8em;font-weight:400;">@${user.username}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <div class="report-user-summary">
+                                <span class="summary-pill">⏱ ${this._formatReportTime(totalTime)}</span>
+                                <span class="summary-pill">🎯 ${overallAccuracy}%</span>
+                                <span class="summary-pill">⚡ ${overallPpm}</span>
+                                <span class="summary-pill">📚 ${user.sets.length} sets</span>
+                            </div>
+                            <span class="report-toggle ${isOpen ? 'open' : ''}" id="report-toggle-${user.userId}">▼</span>
+                        </div>
+                    </div>
+                    <div class="report-user-body ${isOpen ? 'open' : ''}" id="report-body-${user.userId}">
+                        ${setsHtml}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `<div class="admin-report" style="min-width:700px;">${filterHtml}${cardsHtml}</div>`;
+    }
+
+    toggleReportUser(userId) {
+        const body = document.getElementById(`report-body-${userId}`);
+        const toggle = document.getElementById(`report-toggle-${userId}`);
+        if (!body) return;
+        body.classList.toggle('open');
+        if (toggle) toggle.classList.toggle('open');
+    }
+
+    filterReport() {
+        const select = document.getElementById('report-user-filter');
+        if (!select || !this._reportData) return;
+        const userId = select.value;
+        const container = document.getElementById('wp-modal-body');
+        container.innerHTML = this._buildReportHtml(this._reportData, userId);
+    }
+
+    _formatReportTime(seconds) {
+        if (!seconds || seconds <= 0) return '0m';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (h > 0) return `${h}h${m > 0 ? ` ${m}m` : ''}`;
+        return `${m}m`;
+    }
+
+    _accuracyClass(val) {
+        if (val >= 85) return 'accuracy-high';
+        if (val >= 60) return 'accuracy-mid';
+        if (val > 0) return 'accuracy-low';
+        return '';
+    }
+
+    _ppmClass(val) {
+        if (val >= 5) return 'ppm-high';
+        if (val >= 2) return 'ppm-mid';
+        if (val > 0) return 'ppm-low';
+        return '';
+    }
+
     // ===== PDF EXPORT =====
     async showExportPdfForm() {
         try {
@@ -1845,6 +2037,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;padding:14px;backgrou
 
     closeModal() {
         document.getElementById('wp-modal-overlay').classList.remove('active');
+        document.querySelector('.wp-modal')?.classList.remove('wp-modal-wide');
     }
 
     // ===== TOAST =====

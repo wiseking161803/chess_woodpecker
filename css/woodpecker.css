@@ -1282,6 +1282,11 @@ textarea.wp-input {
     box-shadow: var(--shadow-lg);
 }
 
+.wp-modal.wp-modal-wide {
+    max-width: 1100px;
+    width: 95vw;
+}
+
 .wp-modal-header {
     padding: 20px 24px;
     border-bottom: 1px solid var(--border);
@@ -2187,5 +2192,319 @@ body,
         justify-content: space-around;
         border-top: 1px solid var(--border);
         padding-top: 10px;
+    }
+}
+
+/* ===== ADMIN REPORT ===== */
+.wp-btn-accent {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #fff;
+    border: none;
+}
+
+.wp-btn-accent:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+
+/* Report container (used as full-page view inside modal or admin section) */
+.admin-report {
+    padding: 4px 0;
+    max-width: 100%;
+}
+
+/* Filter bar */
+.admin-report-filter {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.admin-report-filter label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.admin-report-filter select {
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    border: 1px solid var(--border-strong);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    min-width: 180px;
+}
+
+.admin-report-filter select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+/* User card inside report */
+.report-user-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: var(--transition);
+}
+
+.report-user-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-md);
+}
+
+.report-user-header {
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #fff;
+    cursor: pointer;
+}
+
+.report-user-header:hover {
+    filter: brightness(1.08);
+}
+
+.report-user-name {
+    font-size: 1rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.report-user-name .user-icon {
+    width: 32px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.report-user-summary {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.report-user-summary .summary-pill {
+    background: rgba(255, 255, 255, 0.18);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Set section inside user card */
+.report-set-section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.report-set-section:last-child {
+    border-bottom: none;
+}
+
+.report-set-name {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.report-set-name .puzzle-count-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+/* Cycle stats table */
+.report-cycle-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.82rem;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.report-cycle-table thead th {
+    padding: 10px 12px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border-bottom: 2px solid var(--border-strong);
+    white-space: nowrap;
+}
+
+.report-cycle-table thead th:first-child {
+    text-align: left;
+    padding-left: 16px;
+}
+
+.report-cycle-table thead th.cycle-col {
+    min-width: 110px;
+}
+
+.report-cycle-table thead th.overall-col {
+    background: linear-gradient(135deg, rgba(124, 92, 245, 0.15), rgba(124, 92, 245, 0.08));
+    color: var(--accent);
+    font-weight: 800;
+}
+
+.report-cycle-table tbody td {
+    padding: 8px 12px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.report-cycle-table tbody td:first-child {
+    text-align: left;
+    padding-left: 16px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.report-cycle-table tbody td.overall-col {
+    background: rgba(124, 92, 245, 0.04);
+    font-weight: 700;
+}
+
+.report-cycle-table tbody tr:hover td {
+    background: var(--bg-card-hover);
+}
+
+.report-cycle-table tbody tr:hover td.overall-col {
+    background: rgba(124, 92, 245, 0.08);
+}
+
+/* Color-coded stat cells */
+.stat-cell {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-cell.accuracy-high {
+    color: var(--success);
+}
+
+.stat-cell.accuracy-mid {
+    color: var(--warning);
+}
+
+.stat-cell.accuracy-low {
+    color: var(--danger);
+}
+
+.stat-cell.ppm-high {
+    color: #22d3ee;
+}
+
+.stat-cell.ppm-mid {
+    color: var(--info);
+}
+
+.stat-cell.ppm-low {
+    color: var(--text-muted);
+}
+
+/* No data placeholder inside table */
+.report-cycle-table .no-data {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-style: italic;
+}
+
+/* Empty state for report */
+.report-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-muted);
+}
+
+.report-empty .empty-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.report-empty .empty-text {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+/* Toggle arrow */
+.report-toggle {
+    transition: transform 0.2s;
+    font-size: 0.8rem;
+}
+
+.report-toggle.open {
+    transform: rotate(180deg);
+}
+
+.report-user-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s ease;
+}
+
+.report-user-body.open {
+    max-height: 5000px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .report-cycle-table {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .admin-report-filter {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .admin-report-filter select {
+        min-width: 100%;
+    }
+
+    .report-user-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .report-user-summary {
+        width: 100%;
     }
 }
