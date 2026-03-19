@@ -1495,7 +1495,7 @@ class WoodpeckerApp {
         }
     }
 
-    _buildReportHtml(users, filterUserId = '') {
+    _buildReportHtml(users, filterUserId = '', sortBy = 'name') {
         if (!users || users.length === 0) {
             return `<div class="report-empty"><div class="empty-icon">📭</div><div class="empty-text">Chưa có dữ liệu</div></div>`;
         }
@@ -1505,17 +1505,50 @@ class WoodpeckerApp {
             `<option value="${u.userId}" ${filterUserId === u.userId ? 'selected' : ''}>${u.fullName} (@${u.username})</option>`
         ).join('');
 
+        const sortBtnStyle = (key) => sortBy === key
+            ? 'background:linear-gradient(135deg,var(--gradient-start),var(--gradient-end));color:#fff;border-color:transparent;'
+            : '';
+
         const filterHtml = `
             <div class="admin-report-filter">
-                <label>👤 Lọc theo user:</label>
+                <label>👤 Lọc:</label>
                 <select id="report-user-filter" onchange="wpApp.filterReport()">
-                    <option value="">— Tất cả (${users.length} users) —</option>
+                    <option value="">— Tất cả (${users.length}) —</option>
                     ${filterOptions}
                 </select>
+                <label style="margin-left:8px;">📊 Sắp xếp:</label>
+                <button class="wp-btn wp-btn-sm wp-btn-secondary" style="${sortBtnStyle('name')}" onclick="wpApp.sortReport('name')">Tên</button>
+                <button class="wp-btn wp-btn-sm wp-btn-secondary" style="${sortBtnStyle('accuracy')}" onclick="wpApp.sortReport('accuracy')">🎯 Chính xác ↓</button>
+                <button class="wp-btn wp-btn-sm wp-btn-secondary" style="${sortBtnStyle('ppm')}" onclick="wpApp.sortReport('ppm')">⚡ PPM ↓</button>
             </div>
         `;
 
-        const filteredUsers = filterUserId ? users.filter(u => u.userId === filterUserId) : users;
+        let filteredUsers = filterUserId ? users.filter(u => u.userId === filterUserId) : [...users];
+
+        // Pre-compute aggregate stats for sorting
+        const userAgg = new Map();
+        filteredUsers.forEach(user => {
+            let totalTime = 0, totalAttempted = 0, totalSolved = 0;
+            user.sets.forEach(s => {
+                totalTime += s.overall.totalTime;
+                totalAttempted += s.overall.puzzlesAttempted;
+                totalSolved += s.overall.puzzlesSolved;
+            });
+            userAgg.set(user.userId, {
+                accuracy: totalAttempted > 0 ? totalSolved / totalAttempted * 100 : 0,
+                ppm: totalTime > 0 ? totalSolved / (totalTime / 60) : 0
+            });
+        });
+
+        // Sort
+        if (sortBy === 'accuracy') {
+            filteredUsers.sort((a, b) => (userAgg.get(b.userId).accuracy) - (userAgg.get(a.userId).accuracy));
+        } else if (sortBy === 'ppm') {
+            filteredUsers.sort((a, b) => (userAgg.get(b.userId).ppm) - (userAgg.get(a.userId).ppm));
+        } else {
+            filteredUsers.sort((a, b) => (a.fullName || a.username).localeCompare(b.fullName || b.username, 'vi'));
+        }
+
 
         const cardsHtml = filteredUsers.map((user, idx) => {
             // Calculate overall stats across all sets
@@ -1634,7 +1667,15 @@ class WoodpeckerApp {
         if (!select || !this._reportData) return;
         const userId = select.value;
         const container = document.getElementById('wp-modal-body');
-        container.innerHTML = this._buildReportHtml(this._reportData, userId);
+        container.innerHTML = this._buildReportHtml(this._reportData, userId, this._reportSort || 'name');
+    }
+
+    sortReport(sortBy) {
+        this._reportSort = sortBy;
+        const select = document.getElementById('report-user-filter');
+        const filterUserId = select ? select.value : '';
+        const container = document.getElementById('wp-modal-body');
+        container.innerHTML = this._buildReportHtml(this._reportData, filterUserId, sortBy);
     }
 
     _formatReportTime(seconds) {
