@@ -580,16 +580,131 @@ class ChessBoard {
 
         // Check for promotion
         const piece = this.position.get(from);
-        let promotion = undefined;
         if (piece && piece.type === 'p') {
             const targetRank = to[1];
             if ((piece.color === 'w' && targetRank === '8') || (piece.color === 'b' && targetRank === '1')) {
-                promotion = 'q'; // Auto-promote to queen
+                // Show promotion dialog
+                this._showPromotionDialog(from, to, piece.color);
+                return;
             }
         }
 
-        this.onMove(from, to, promotion);
+        this.onMove(from, to, undefined);
         this._clearSelection();
+    }
+
+    /**
+     * Show promotion piece picker dialog
+     */
+    _showPromotionDialog(from, to, color) {
+        this._removePromotionOverlay();
+        this.interactive = false; // Disable board interaction during selection
+
+        const pieces = ['q', 'r', 'b', 'n'];
+        const isWhite = color === 'w';
+
+        // Get the column of the target square for positioning
+        const { col } = this._squareNameToColRow(to);
+        const displayCol = this.flipped ? 7 - col : col;
+
+        // Determine vertical direction: white promotes on rank 8 (top), black on rank 1 (bottom)
+        // If flipped, the directions reverse
+        const fromTop = (isWhite && !this.flipped) || (!isWhite && this.flipped);
+
+        // Create overlay backdrop (darkens the board)
+        const overlay = document.createElement('div');
+        overlay.className = 'promotion-overlay';
+        overlay.style.cssText = `
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.45); z-index: 100; cursor: pointer;
+        `;
+
+        // Create the picker container aligned to the promotion column
+        const picker = document.createElement('div');
+        picker.className = 'promotion-picker';
+        const pickerLeft = displayCol * this.squareSize;
+
+        picker.style.cssText = `
+            position: absolute;
+            left: ${pickerLeft}px;
+            ${fromTop ? 'top: 0' : 'bottom: 0'};
+            width: ${this.squareSize}px;
+            z-index: 101;
+            display: flex;
+            flex-direction: column;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+        `;
+
+        const orderedPieces = fromTop ? pieces : [...pieces].reverse();
+
+        orderedPieces.forEach((p, i) => {
+            const btn = document.createElement('div');
+            btn.className = 'promotion-piece-btn';
+            const isEven = (fromTop ? i : pieces.length - 1 - i) % 2 === 0;
+            btn.style.cssText = `
+                width: ${this.squareSize}px;
+                height: ${this.squareSize}px;
+                display: flex; align-items: center; justify-content: center;
+                cursor: pointer;
+                background: ${isEven ? '#f0d9b5' : '#b58863'};
+                transition: background 0.15s ease, transform 0.1s ease;
+            `;
+
+            const img = document.createElement('img');
+            const pieceKey = color + p.toUpperCase();
+            img.src = `img/pieces/${pieceKey}.svg`;
+            img.style.cssText = `
+                width: ${this.squareSize * 0.8}px;
+                height: ${this.squareSize * 0.8}px;
+                pointer-events: none;
+                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+            `;
+            btn.appendChild(img);
+
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = 'rgba(255, 255, 100, 0.7)';
+                btn.style.transform = 'scale(1.05)';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = isEven ? '#f0d9b5' : '#b58863';
+                btn.style.transform = 'scale(1)';
+            });
+
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._removePromotionOverlay();
+                this.interactive = true;
+                this.onMove(from, to, p);
+                this._clearSelection();
+            });
+
+            picker.appendChild(btn);
+        });
+
+        // Clicking overlay (outside picker) cancels promotion
+        overlay.addEventListener('click', () => {
+            this._removePromotionOverlay();
+            this.interactive = true;
+            this._clearSelection();
+            this._drawPieces(); // Redraw to restore piece positions
+        });
+
+        this.container.appendChild(overlay);
+        this.container.appendChild(picker);
+        this._promotionOverlay = { overlay, picker };
+    }
+
+    /**
+     * Remove promotion overlay
+     */
+    _removePromotionOverlay() {
+        if (this._promotionOverlay) {
+            this._promotionOverlay.overlay.remove();
+            this._promotionOverlay.picker.remove();
+            this._promotionOverlay = null;
+        }
     }
 
     /**
