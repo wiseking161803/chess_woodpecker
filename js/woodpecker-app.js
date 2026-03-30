@@ -19,8 +19,7 @@ class WoodpeckerApp {
         this._setupBeforeUnload();
         if (this.token) {
             try {
-                // Cache-bust to prevent proxy/CDN returning stale response from another user
-                const res = await this._api(`/api/auth/me?_t=${Date.now()}`);
+                const res = await this._api('/api/auth/me');
                 this.user = res;
                 // Verify stored username matches - detect stale session from another user
                 const storedUser = localStorage.getItem('wp_username');
@@ -50,10 +49,15 @@ class WoodpeckerApp {
     async _api(url, options = {}) {
         const headers = { ...options.headers };
         if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
-        // Prevent browser from caching auth-related API responses
-        if (url.includes('/api/auth/')) {
+        // Prevent browser/CDN from caching any API responses
+        if (url.includes('/api/')) {
             headers['Cache-Control'] = 'no-cache, no-store';
             headers['Pragma'] = 'no-cache';
+            // Cache-bust GET requests with timestamp to bypass stale CDN cache
+            if (!options.method || options.method === 'GET') {
+                const separator = url.includes('?') ? '&' : '?';
+                url = `${url}${separator}_t=${Date.now()}`;
+            }
         }
         if (options.body && !(options.body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';

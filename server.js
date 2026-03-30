@@ -1531,6 +1531,7 @@ app.get('/api/external/users', async (req, res) => {
 });
 
 // ===== START SERVER =====
+let server;
 async function start() {
     try {
         await initDB();
@@ -1541,11 +1542,31 @@ async function start() {
         process.exit(1);
     }
 
-    app.listen(PORT, '0.0.0.0', () => {
+    server = app.listen(PORT, '0.0.0.0', () => {
         console.log(`\n  ♞ Chess Trainer Server`);
         console.log(`  → Main App:   http://localhost:${PORT}`);
         console.log(`  → Woodpecker: http://localhost:${PORT}/woodpecker.html\n`);
     });
 }
+
+// Graceful shutdown — prevents "npm error signal SIGTERM" in Railway logs
+function gracefulShutdown(signal) {
+    console.log(`\n  ℹ Received ${signal}, shutting down gracefully...`);
+    if (server) {
+        server.close(() => {
+            console.log('  ✓ HTTP server closed');
+            pool.end().then(() => {
+                console.log('  ✓ Database pool closed');
+                process.exit(0);
+            }).catch(() => process.exit(0));
+        });
+        // Force exit after 5s if graceful shutdown hangs
+        setTimeout(() => process.exit(0), 5000);
+    } else {
+        process.exit(0);
+    }
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 start();
