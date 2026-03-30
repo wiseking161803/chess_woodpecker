@@ -11,6 +11,16 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 
+// Prevent caching of all API responses (CRITICAL: prevents Railway proxy from caching /api/auth/me across users)
+app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.set('Surrogate-Control', 'no-store');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Vary', 'Authorization');
+    next();
+});
+
 // Health check endpoint (for Railway)
 app.get('/healthz', (req, res) => {
     res.status(200).json({ status: 'ok', uptime: process.uptime() });
@@ -98,6 +108,9 @@ app.post('/api/auth/login', async (req, res) => {
 
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) return res.status(401).json({ error: 'Sai tên đăng nhập hoặc mật khẩu' });
+
+        // Clean up ALL old sessions for this user to prevent stale session issues
+        await pool.query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
 
         const token = generateToken();
         await pool.query('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);

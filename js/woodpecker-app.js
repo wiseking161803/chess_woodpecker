@@ -19,12 +19,26 @@ class WoodpeckerApp {
         this._setupBeforeUnload();
         if (this.token) {
             try {
-                const res = await this._api('/api/auth/me');
+                // Cache-bust to prevent proxy/CDN returning stale response from another user
+                const res = await this._api(`/api/auth/me?_t=${Date.now()}`);
                 this.user = res;
+                // Verify stored username matches - detect stale session from another user
+                const storedUser = localStorage.getItem('wp_username');
+                if (storedUser && storedUser !== res.username) {
+                    console.warn(`Session mismatch: stored=${storedUser}, server=${res.username}. Clearing stale session.`);
+                    this.token = null;
+                    this.user = null;
+                    localStorage.removeItem('wp_token');
+                    localStorage.removeItem('wp_username');
+                    this._showLogin();
+                    return;
+                }
+                localStorage.setItem('wp_username', res.username);
                 this._showDashboard();
             } catch {
                 this.token = null;
                 localStorage.removeItem('wp_token');
+                localStorage.removeItem('wp_username');
                 this._showLogin();
             }
         } else {
@@ -36,6 +50,11 @@ class WoodpeckerApp {
     async _api(url, options = {}) {
         const headers = { ...options.headers };
         if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        // Prevent browser from caching auth-related API responses
+        if (url.includes('/api/auth/')) {
+            headers['Cache-Control'] = 'no-cache, no-store';
+            headers['Pragma'] = 'no-cache';
+        }
         if (options.body && !(options.body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(options.body);
@@ -245,6 +264,12 @@ class WoodpeckerApp {
         btn.innerHTML = '<span class="wp-spinner"></span> Đang đăng nhập...';
 
         try {
+            // CRITICAL: Clear any old token BEFORE login so we don't leak another user's session
+            const oldToken = this.token;
+            this.token = null;
+            localStorage.removeItem('wp_token');
+            localStorage.removeItem('wp_username');
+
             const data = await this._api('/api/auth/login', {
                 method: 'POST',
                 body: { username, password }
@@ -252,6 +277,7 @@ class WoodpeckerApp {
             this.token = data.token;
             this.user = data.user;
             localStorage.setItem('wp_token', this.token);
+            localStorage.setItem('wp_username', data.user.username);
             this._showDashboard();
         } catch (err) {
             errorEl.textContent = err.message;
@@ -281,6 +307,7 @@ class WoodpeckerApp {
         this.token = null;
         this.user = null;
         localStorage.removeItem('wp_token');
+        localStorage.removeItem('wp_username');
         this._showLogin();
     }
 
