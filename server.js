@@ -257,6 +257,31 @@ app.post('/api/admin/users/:id/reject', authMiddleware, adminMiddleware, async (
     }
 });
 
+// Admin: Reset user password
+app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware, async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 4) {
+        return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 4 ký tự' });
+    }
+
+    try {
+        const { rows } = await pool.query('SELECT username, role FROM users WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy user' });
+        if (rows[0].role === 'admin') return res.status(400).json({ error: 'Không thể đổi mật khẩu admin' });
+
+        const hash = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.params.id]);
+
+        // Invalidate all sessions for this user so they must re-login
+        await pool.query('DELETE FROM sessions WHERE user_id = $1', [req.params.id]);
+
+        res.json({ success: true, message: `Đã đặt lại mật khẩu cho ${rows[0].username}` });
+    } catch (err) {
+        console.error('Reset password error:', err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
 // Admin: Get user detailed stats
 app.get('/api/admin/users/:id/stats', authMiddleware, adminMiddleware, async (req, res) => {
     try {

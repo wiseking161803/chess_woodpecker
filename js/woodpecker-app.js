@@ -1300,7 +1300,7 @@ class WoodpeckerApp {
                         <div class="wp-admin-item-meta">${u.role} · ${new Date(u.createdAt).toLocaleDateString('vi')}</div>
                     </div>
                     <div class="wp-admin-item-actions">
-                        ${u.role !== 'admin' ? `<button class="wp-btn wp-btn-danger wp-btn-sm" onclick="wpApp.deleteUser('${u.id}')">🗑</button>` : ''}
+                        ${u.role !== 'admin' ? `<button class="wp-btn wp-btn-secondary wp-btn-sm" onclick="wpApp.showResetPasswordForm('${u.id}', '${(u.fullName || u.username).replace(/'/g, "\\\\'")}')" title="Đặt lại mật khẩu">🔑</button><button class="wp-btn wp-btn-danger wp-btn-sm" onclick="wpApp.deleteUser('${u.id}')">🗑</button>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -1415,6 +1415,41 @@ class WoodpeckerApp {
             this.closeModal();
             this.showToast(data.message || 'Đã từ chối đăng ký!', 'success');
             this._loadAdminData();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+        }
+    }
+
+    showResetPasswordForm(userId, displayName) {
+        this._openModal('🔑 Đặt lại mật khẩu', `
+            <div class="wp-form-group">
+                <label>User: <strong>${displayName}</strong></label>
+            </div>
+            <div class="wp-form-group">
+                <label>Mật khẩu mới</label>
+                <input class="wp-input" id="reset-pw-input" type="password" placeholder="Nhập mật khẩu mới (≥ 4 ký tự)" minlength="4">
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                <button class="wp-btn wp-btn-secondary" onclick="wpApp.closeModal()">Hủy</button>
+                <button class="wp-btn wp-btn-primary" onclick="wpApp.resetPassword('${userId}')">Đặt lại</button>
+            </div>
+        `);
+        setTimeout(() => document.getElementById('reset-pw-input')?.focus(), 100);
+    }
+
+    async resetPassword(userId) {
+        const newPassword = document.getElementById('reset-pw-input')?.value;
+        if (!newPassword || newPassword.length < 4) {
+            this.showToast('Mật khẩu phải có ít nhất 4 ký tự', 'error');
+            return;
+        }
+        try {
+            const data = await this._api(`/api/admin/users/${userId}/reset-password`, {
+                method: 'POST',
+                body: { newPassword }
+            });
+            this.closeModal();
+            this.showToast(data.message || 'Đã đặt lại mật khẩu!', 'success');
         } catch (err) {
             this.showToast(err.message, 'error');
         }
